@@ -37,32 +37,56 @@ pub struct DeepSeekAdapter {
     max_tokens: Option<u32>,
 }
 
+/// 构建 HTTP 客户端。代理为空时交给 reqwest 的默认行为（读 `HTTPS_PROXY` 等环境变量）。
+fn build_client(proxy: Option<&str>) -> Result<reqwest::Client, LlmError> {
+    let mut builder = reqwest::Client::builder()
+        // 连接超时给短：车机网络差时要快速失败，别让用户干等。
+        .connect_timeout(Duration::from_secs(15))
+        // 整体超时给长：流式响应要一直读到最后一个 token，180s 在长回答 +
+        // 弱网下会被中途掐断，那是最难查的一类"答案缺一半"。
+        .timeout(Duration::from_secs(600))
+        .user_agent(concat!("dsh-mini/", env!("CARGO_PKG_VERSION")));
+
+    if let Some(url) = proxy {
+        let url = url.trim();
+        if !url.is_empty() {
+            builder = builder.proxy(reqwest::Proxy::all(url).map_err(|err| LlmError::Adapter {
+                adapter: ADAPTER,
+                message: format!("代理地址 `{url}` 不合法：{err}"),
+            })?);
+        }
+    }
+
+    builder.build().map_err(|err| LlmError::Adapter {
+        adapter: ADAPTER,
+        message: format!("构建 HTTP 客户端失败：{err}"),
+    })
+}
+
 impl DeepSeekAdapter {
     pub fn new(
         api_key: impl Into<String>,
         base_url: impl Into<String>,
         model: impl Into<String>,
     ) -> Result<Self, LlmError> {
-        let client = reqwest::Client::builder()
-            // 连接超时给短：车机网络差时要快速失败，别让用户干等。
-            .connect_timeout(Duration::from_secs(15))
-            // 整体超时给长：流式响应要一直读到最后一个 token，180s 在长回答 +
-            // 弱网下会被中途掐断，那是最难查的一类"答案缺一半"。
-            .timeout(Duration::from_secs(600))
-            .user_agent(concat!("dsh-mini/", env!("CARGO_PKG_VERSION")))
-            .build()
-            .map_err(|err| LlmError::Adapter {
-                adapter: ADAPTER,
-                message: format!("构建 HTTP 客户端失败：{err}"),
-            })?;
         Ok(Self {
-            client,
+            client: build_client(None)?,
             base_url: base_url.into(),
             api_key: api_key.into(),
             model: model.into(),
             thinking: false,
             max_tokens: None,
         })
+    }
+
+    /// 显式指定网关/代理（`http://`、`https://`、`socks5://` 之类）。
+    ///
+    /// 车机上常见两种用法：走车内网关的 HTTP 代理，或者走手机热点的 socks5。
+    pub fn with_proxy(mut self, proxy: Option<&str>) -> Result<Self, LlmError> {
+        if let Some(url) = proxy.map(str::trim).filter(|url| !url.is_empty()) {
+            self.client = build_client(Some(url))?;
+        }
+        Ok(self)
     }
 
     pub fn with_thinking(mut self, enabled: bool) -> Self {

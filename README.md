@@ -14,7 +14,7 @@
 <img alt="license" src="https://img.shields.io/badge/license-MIT-blue">
 <img alt="rust" src="https://img.shields.io/badge/rust-1.77%2B-orange">
 <img alt="platform" src="https://img.shields.io/badge/platform-linux%20%7C%20wsl%20%7C%20windows-lightgrey">
-<img alt="tests" src="https://img.shields.io/badge/tests-95%20passing-brightgreen">
+<img alt="tests" src="https://img.shields.io/badge/tests-97%20passing-brightgreen">
 </p>
 
 ---
@@ -96,10 +96,11 @@ echo 'DEEPSEEK_API_KEY=sk-...' > ~/.dsh-mini/.env    # 全局
 `.env` 支持 `export` 前缀、单双引号与 `#` 注释，和 `/bin/sh` 的写法一致，可以直接复用 `EnvironmentFile`。
 也支持在 `.env` 里覆盖 `DEEPSEEK_BASE_URL`（私有网关 / 离线部署）。
 
-走网关或反向代理时，把 `--base-url` 指向它就够了：
+走网关或反向代理时，把 `--base-url` 指向它就够了；需要经过 HTTP/SOCKS 代理时加 `--proxy`：
 
 ```sh
 dsh-mini --base-url http://10.0.0.5:8000/v1 "改个 bug"
+dsh-mini --proxy socks5://127.0.0.1:1080 "改个 bug"      # 或写进 .env: DSH_PROXY=...
 ```
 
 密钥也不一定要写在 `.env` 里：`--key-file` 会读文件的第一行非空内容，专给 systemd `LoadCredential=` / Docker secrets 这类"裸文件"场景（**Key 永远不会出现在 argv 里**）：
@@ -151,6 +152,7 @@ scp target/.../dsh-mini root@car:/data/bin/
 部署时建议：
 
 - 用 `--home /data/dsh-mini` 把会话日志指到可写分区（默认是 `<cwd>/.dsh-mini`，车机上往往只读）。
+- 用 `--log-max-mb` 给会话日志封顶（默认 32 MB）：eMMC 很贵，跑一个月不该把分区写满。到顶后只是**停止落盘**，进程继续在内存里跑完。
 - 用 `--sandbox landlock` 强制沙箱；内核 < 5.13 会在启动阶段就报错，而不是跑起来才发现没有隔离。
 - 内存紧张时把 `--history-budget` 调小（例如 `8` MB→`1`），模型可见历史会自动压缩最旧的工具输出。
 - 并发跑多个实例时，给每个实例独立的 `--home`，会话文件不共享写。
@@ -376,6 +378,8 @@ python evals/run_evals.py --model deepseek-flash   # 全量 51 条
 | `--key-file <FILE>` | — | 从文件读 API Key（取第一个非空行） |
 | `--tool-timeout <SECS>` | `120` | 单次工具执行超时，超时整组 kill |
 | `--history-budget <MB>` | `2` | 模型可见历史预算，`0` 关闭压缩 |
+| `--proxy <URL>` | — | 网关/代理（`http://`、`socks5://`）；也可写 `.env` 的 `DSH_PROXY` |
+| `--log-max-mb <MB>` | `32` | 单个会话日志的字节上限，到顶停止落盘（进程继续跑），`0` 关闭 |
 
 ---
 
@@ -406,14 +410,13 @@ python evals/run_evals.py --model deepseek-flash   # 全量 51 条
 - [ ] GitHub Actions：Linux 全量测试 + `aarch64` 交叉编译产物
 - [ ] MCP HTTP 传输与分页
 - [ ] Landlock 网络端口规则（ABI v4+）
-- [ ] 显式的 HTTP(S) 代理参数
 
 ---
 
 ## 贡献
 
 ```sh
-cargo test --workspace            # 95 项
+cargo test --workspace            # 97 项
 cargo clippy --all-targets        # 零告警
 cargo fmt --all --check
 python evals/run_evals.py --self-test && python evals/run_evals.py --smoke

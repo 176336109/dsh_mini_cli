@@ -76,6 +76,15 @@ pub struct Cli {
     #[arg(long, default_value_t = 120, value_name = "SECS")]
     pub tool_timeout: u64,
 
+    /// 网关/代理地址（http://、https://、socks5://）。留空则用 reqwest 的默认行为。
+    #[arg(long, value_name = "URL")]
+    pub proxy: Option<String>,
+
+    /// 单个会话日志的字节上限（MB）。到上限后停止落盘，进程继续跑。
+    /// 传 0 关闭限制。
+    #[arg(long, default_value_t = 32, value_name = "MB")]
+    pub log_max_mb: u64,
+
     /// 模型可见历史的预算（MB）：超出后最旧的工具输出会被压成省略标记。
     /// 传 0 关闭压缩。磁盘上的会话日志始终完整。
     #[arg(long, default_value_t = 2, value_name = "MB")]

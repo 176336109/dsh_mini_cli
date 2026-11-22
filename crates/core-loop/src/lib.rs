@@ -180,8 +180,9 @@ impl AgentLoop {
             None => None,
         };
         if let Some(err) = failure {
-            // 磁盘满/只读之类的持久化故障不该让 agent 停摆：记一次然后停用 sink。
-            eprintln!("警告：会话落盘失败，后续事件只留在内存：{err}");
+            // 磁盘满/只读/日志到上限这类持久化问题不该让 agent 停摆：
+            // 记一次然后停用 sink，会话继续在内存里跑完。
+            eprintln!("警告：会话落盘已停止，后续事件只留在内存：{err}");
             self.sink = None;
         }
         self.log.push(event);

@@ -29,6 +29,8 @@ pub enum StoreError {
     Io(#[from] std::io::Error),
     #[error("事件序列化失败：{0}")]
     Serialize(String),
+    #[error("会话日志已达上限 {limit} 字节，后续事件不再落盘（见 --log-max-mb）")]
+    Limit { limit: u64 },
     #[error("第 {line} 行是未知且不可忽略的事件，拒绝重建会话（{detail}）")]
     UnknownRequiredEvent { line: usize, detail: String },
 }
@@ -44,9 +46,22 @@ pub struct Appender {
     file: std::fs::File,
     buf: Vec<u8>,
     path: PathBuf,
+    /// 已写入的字节数（用于上限判断）。
+    written: u64,
+    /// 单个会话日志的字节上限；0 表示不限制。
+    max_bytes: u64,
 }
 
 impl Appender {
+    /// 给日志加字节上限。车机的 eMMC 很贵：跑一个月不该把分区写满。
+    ///
+    /// 到达上限后 `write` 返回 [`StoreError::Limit`]，调用方（`AgentLoop`）只告警
+    /// 一次并停用 sink —— 会话继续在内存里跑完，只是不再落盘。
+    pub fn with_max_bytes(mut self, max_bytes: u64) -> Self {
+        self.max_bytes = max_bytes;
+        self
+    }
+
     /// 追加一条事件。序列化在写盘之前完成，失败不会留下半行。
     pub fn write(&mut self, event: &SessionEvent) -> Result<(), StoreError> {
         self.write_many(std::slice::from_ref(event))
@@ -63,7 +78,14 @@ impl Appender {
                 .map_err(|err| StoreError::Serialize(err.to_string()))?;
             self.buf.push(b'\n');
         }
+        let upcoming = self.written + self.buf.len() as u64;
+        if self.max_bytes > 0 && upcoming > self.max_bytes {
+            return Err(StoreError::Limit {
+                limit: self.max_bytes,
+            });
+        }
         self.file.write_all(&self.buf)?;
+        self.written = upcoming;
         Ok(())
     }
 
@@ -100,10 +122,14 @@ impl JsonlStore {
         std::fs::create_dir_all(&self.root)?;
         let path = self.path_for(id);
         let file = OpenOptions::new().create(true).append(true).open(&path)?;
+        // 续跑时要接着已有字节数算，否则上限会被"每次续跑重新计数"绕过。
+        let written = file.metadata().map(|meta| meta.len()).unwrap_or(0);
         Ok(Appender {
             file,
             buf: Vec::with_capacity(8 * 1024),
             path,
+            written,
+            max_bytes: 0,
         })
     }
 
@@ -277,6 +303,31 @@ mod tests {
         let store = JsonlStore::new(&root);
         assert!(store.load("s1").unwrap().is_empty());
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn log_cap_stops_writing_instead_of_filling_the_disk() {
+        let store = JsonlStore::new(temp_root("cap"));
+        let mut log = SessionLog::new("s1");
+        let limit = 256u64;
+        let mut appender = store.appender("s1").unwrap().with_max_bytes(limit);
+
+        let mut failure = None;
+        for turn in 1..=100u64 {
+            let env = log.next_env();
+            let event = SessionEvent::turn_start(env, turn);
+            log.push(event.clone());
+            if let Err(err) = appender.write(&event) {
+                failure = Some(err.to_string());
+                break;
+            }
+        }
+
+        let failure = failure.expect("写到上限时必须报错，而不是无限写");
+        assert!(failure.contains("上限"), "{failure}");
+        let size = std::fs::metadata(appender.path()).unwrap().len();
+        assert!(size <= limit, "落盘 {size} 字节，超过上限 {limit}");
+        let _ = std::fs::remove_dir_all(store.root());
     }
 
     #[test]

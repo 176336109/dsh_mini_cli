@@ -164,8 +164,9 @@ async fn run_agent(cli: Cli) -> Result<ExitCode> {
 
     // 逐条落盘的句柄：整个会话只打开一次文件。磁盘不可写时降级为纯内存运行，
     // 不让"日志写不进去"变成"任务跑不了"。
+    let log_limit = cli.log_max_mb.saturating_mul(1024 * 1024);
     match store.appender(&session_id) {
-        Ok(appender) => agent = agent.with_sink(Box::new(appender)),
+        Ok(appender) => agent = agent.with_sink(Box::new(appender.with_max_bytes(log_limit))),
         Err(err) => eprintln!("警告：会话无法落盘（{err}），本次运行不留日志"),
     }
 
@@ -180,7 +181,7 @@ async fn run_agent(cli: Cli) -> Result<ExitCode> {
         tool_names
     );
     eprintln!(
-        "工作目录：{} · 数据目录：{} · 工具超时：{}s · 历史预算：{}",
+        "工作目录：{} · 数据目录：{} · 工具超时：{}s · 历史预算：{} · 日志上限：{}",
         cwd.display(),
         home.display(),
         cli.tool_timeout.max(1),
@@ -188,6 +189,11 @@ async fn run_agent(cli: Cli) -> Result<ExitCode> {
             "不限".to_string()
         } else {
             format!("{} MB", cli.history_budget)
+        },
+        if cli.log_max_mb == 0 {
+            "不限".to_string()
+        } else {
+            format!("{} MB", cli.log_max_mb)
         }
     );
     if resumed_events > 0 {
@@ -305,14 +311,18 @@ fn build_adapter(cli: &Cli, dotenv: &DotEnv) -> Result<Arc<dyn LlmAdapter>> {
     let base_url = dotenv
         .lookup("DEEPSEEK_BASE_URL")
         .unwrap_or_else(|| cli.base_url.clone());
+    // 代理：命令行优先，其次 .env 里的 DSH_PROXY（车机上常写死一个车内网关）。
+    let proxy = cli.proxy.clone().or_else(|| dotenv.lookup("DSH_PROXY"));
     let adapter = DeepSeekAdapter::new(key.clone(), base_url.clone(), cli.model.clone())?
-        .with_thinking(cli.thinking);
+        .with_thinking(cli.thinking)
+        .with_proxy(proxy.as_deref())?;
     eprintln!(
-        "模型 · {} @ {} · key={} · thinking={}",
+        "模型 · {} @ {} · key={} · thinking={} · proxy={}",
         cli.model,
         base_url,
         env::mask(&key),
-        if cli.thinking { "on" } else { "off" }
+        if cli.thinking { "on" } else { "off" },
+        proxy.as_deref().unwrap_or("默认")
     );
     Ok(Arc::new(adapter))
 }
