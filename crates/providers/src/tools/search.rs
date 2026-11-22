@@ -58,7 +58,16 @@ struct Walk {
 }
 
 /// 阻塞式遍历：不跟软链接，命中黑名单目录直接跳过。
+///
+/// `root` 本身是文件时只返回它自己 —— 模型经常会直接拿一个文件路径来搜。
 fn walk(root: &Path) -> Walk {
+    if root.is_file() {
+        return Walk {
+            files: vec![root.to_path_buf()],
+            truncated: false,
+        };
+    }
+
     let mut files = Vec::new();
     let mut stack = vec![(root.to_path_buf(), 0usize)];
     let mut visited = 0usize;
@@ -105,9 +114,14 @@ fn walk(root: &Path) -> Walk {
     Walk { files, truncated }
 }
 
-fn relative(root: &Path, path: &Path) -> String {
-    let rel = path.strip_prefix(root).unwrap_or(path);
-    rel.to_string_lossy().replace('\\', "/")
+/// 输出路径一律相对**工作目录**（而不是搜索起点）。
+///
+/// 这样 `grep {path: "src"}` 打出来的是 `src/a.rs` 而不是 `a.rs` —— 模型可以
+/// 直接把结果贴进 `read_file`，不用再拼一次前缀。落在 cwd 之外（只读根）的
+/// 文件退回绝对路径，宁可长一点也不能有歧义。
+fn display_path(cwd: &Path, path: &Path) -> String {
+    let shown = path.strip_prefix(cwd).unwrap_or(path);
+    shown.to_string_lossy().replace('\\', "/")
 }
 
 /// 不含 `/` 的模式按文件名匹配（`*.rs` 命中任意层级的 rust 文件），
@@ -158,6 +172,7 @@ fn contains_ignore_case(haystack: &str, needle_lower: &str) -> bool {
 
 fn grep_blocking(
     root: &Path,
+    cwd: &Path,
     pattern: &str,
     include: Option<&str>,
     ignore_case: bool,
@@ -171,7 +186,7 @@ fn grep_blocking(
     let mut skipped_large = 0usize;
 
     'files: for path in &walk.files {
-        let rel = relative(root, path);
+        let rel = display_path(cwd, path);
         if let Some(include) = include {
             if !pattern_matches(include, &rel) {
                 continue;
@@ -238,13 +253,13 @@ fn grep_blocking(
     Ok(out)
 }
 
-fn glob_blocking(root: &Path, pattern: &str) -> String {
+fn glob_blocking(root: &Path, cwd: &Path, pattern: &str) -> String {
     let walk = walk(root);
     let mut out = String::with_capacity(4096);
     let mut hits = 0usize;
 
     for path in &walk.files {
-        let rel = relative(root, path);
+        let rel = display_path(cwd, path);
         if !pattern_matches(pattern, &rel) {
             continue;
         }
@@ -309,8 +324,9 @@ impl Tool for GrepTool {
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
 
+            let cwd = ctx.cwd.clone();
             let result = tokio::task::spawn_blocking(move || {
-                grep_blocking(&root, &pattern, include.as_deref(), ignore_case)
+                grep_blocking(&root, &cwd, &pattern, include.as_deref(), ignore_case)
             })
             .await
             .map_err(|err| ToolError::Failed(format!("搜索任务失败：{err}")))?;
@@ -352,7 +368,8 @@ impl Tool for GlobTool {
                 None => ctx.cwd.clone(),
             };
 
-            tokio::task::spawn_blocking(move || glob_blocking(&root, &pattern))
+            let cwd = ctx.cwd.clone();
+            tokio::task::spawn_blocking(move || glob_blocking(&root, &cwd, &pattern))
                 .await
                 .map_err(|err| ToolError::Failed(format!("搜索任务失败：{err}")))
         })
@@ -365,8 +382,11 @@ mod tests {
     use crate::tools::path::normalize;
 
     fn workspace() -> PathBuf {
+        // 测试并行跑：只靠时间戳会在同一毫秒内撞目录，必须再加个自增序号。
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let mut root = std::env::temp_dir();
-        root.push(format!("dsh-mini-search-{}", core_session::now_ms()));
+        root.push(format!("dsh-mini-search-{}-{seq}", core_session::now_ms()));
         std::fs::create_dir_all(root.join("src")).unwrap();
         std::fs::create_dir_all(root.join("target")).unwrap();
         std::fs::write(
@@ -384,7 +404,7 @@ mod tests {
     #[test]
     fn grep_finds_matches_with_paths_and_line_numbers() {
         let root = workspace();
-        let out = grep_blocking(&root, "hello", Some("*.rs"), false).unwrap();
+        let out = grep_blocking(&root, &root, "hello", Some("*.rs"), false).unwrap();
         assert!(out.contains("src/main.rs:2:"), "{out}");
         assert!(!out.contains("README.md"), "{out}");
         assert!(!out.contains("target/"), "黑名单目录必须跳过：{out}");
@@ -394,7 +414,7 @@ mod tests {
     #[test]
     fn grep_skips_binary_files() {
         let root = workspace();
-        let out = grep_blocking(&root, "hello", None, false).unwrap();
+        let out = grep_blocking(&root, &root, "hello", None, false).unwrap();
         assert!(!out.contains("blob.bin"), "{out}");
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -402,9 +422,9 @@ mod tests {
     #[test]
     fn grep_ignore_case_only_folds_ascii() {
         let root = workspace();
-        let hit = grep_blocking(&root, "HELLO", None, true).unwrap();
+        let hit = grep_blocking(&root, &root, "HELLO", None, true).unwrap();
         assert!(hit.contains("README.md"), "{hit}");
-        let miss = grep_blocking(&root, "HELLO", None, false).unwrap();
+        let miss = grep_blocking(&root, &root, "HELLO", None, false).unwrap();
         assert!(miss.contains("没有匹配"), "{miss}");
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -412,7 +432,7 @@ mod tests {
     #[test]
     fn grep_reports_when_nothing_matches() {
         let root = workspace();
-        let out = grep_blocking(&root, "definitely-absent", None, false).unwrap();
+        let out = grep_blocking(&root, &root, "definitely-absent", None, false).unwrap();
         assert!(out.contains("没有匹配"), "{out}");
         assert!(out.contains("个文件"), "{out}");
         let _ = std::fs::remove_dir_all(&root);
@@ -421,12 +441,12 @@ mod tests {
     #[test]
     fn glob_lists_files_across_levels() {
         let root = workspace();
-        let out = glob_blocking(&root, "*.rs");
+        let out = glob_blocking(&root, &root, "*.rs");
         assert!(out.contains("src/main.rs"), "{out}");
         assert!(out.contains("src/lib.rs"), "{out}");
         assert!(!out.contains("target/junk.rs"), "{out}");
 
-        let scoped = glob_blocking(&root, "src/**/*.rs");
+        let scoped = glob_blocking(&root, &root, "src/**/*.rs");
         assert!(scoped.contains("src/main.rs"), "{scoped}");
         assert!(!scoped.contains("README.md"), "{scoped}");
         let _ = std::fs::remove_dir_all(&root);
@@ -437,6 +457,30 @@ mod tests {
         // resolve_read 负责边界，这里只确认相对路径归一化后不会带 ".."
         let root = normalize(Path::new("/tmp/x"));
         assert!(!root.to_string_lossy().contains(".."));
+    }
+
+    #[test]
+    fn results_are_relative_to_the_workspace_not_the_search_root() {
+        let root = workspace();
+        let sub = root.join("src");
+
+        let grepped = grep_blocking(&sub, &root, "helper", None, false).unwrap();
+        assert!(
+            grepped.contains("src/lib.rs:"),
+            "路径要相对工作目录：{grepped}"
+        );
+
+        let globbed = glob_blocking(&sub, &root, "*.rs");
+        assert!(globbed.contains("src/main.rs"), "{globbed}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn searching_a_single_file_works() {
+        let root = workspace();
+        let out = grep_blocking(&root.join("src/lib.rs"), &root, "helper", None, false).unwrap();
+        assert!(out.contains("src/lib.rs:1:"), "{out}");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

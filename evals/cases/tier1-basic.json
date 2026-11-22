@@ -330,6 +330,58 @@
       "verify": { "type": "file_equals", "path": "answer.txt", "text": "6" },
       "max_steps": 8,
       "notes": "两个文件分别 2 行和 4 行。要按文件累加，不是只看一个。"
+    },
+    {
+      "id": "E6",
+      "category": "env",
+      "difficulty": 2,
+      "prompt": "把 crates 目录下所有名为 mod.rs 的文件，其相对工作目录的路径（用 / 分隔）按字母序写入 index.txt，一行一个。",
+      "fixture": {
+        "files": {
+          "crates/a/src/mod.rs": "pub mod a;\n",
+          "crates/b/src/mod.rs": "pub mod b;\n",
+          "crates/b/src/deep/mod.rs": "pub mod deep;\n",
+          "crates/a/src/lib.rs": "pub mod a;\n",
+          "crates/c/README.md": "没有 mod.rs\n",
+          "notes/mod.rs": "不在 crates 下，不该被算进去\n"
+        }
+      },
+      "verify": {
+        "type": "all_of",
+        "all_of": [
+          {
+            "type": "file_equals",
+            "path": "index.txt",
+            "text": "crates/a/src/mod.rs\ncrates/b/src/deep/mod.rs\ncrates/b/src/mod.rs"
+          },
+          { "type": "stdout_contains", "text": "→ glob" }
+        ]
+      },
+      "max_steps": 10,
+      "notes": "内置 glob 的回归保护：结果路径必须相对工作目录（不是相对搜索起点），且要按字母序。用 bash 拼 find 也能出结果但不算过 —— 新工具需要覆盖。给 10 步是因为 Windows 的 cmd 没有 find/bash，模型拿到正确结果后仍会白试几次。"
+    },
+    {
+      "id": "A7",
+      "category": "locate",
+      "difficulty": 2,
+      "prompt": "src 目录下的 .rs 文件里，哪个文件包含字符串 MARKER-TOKEN-42？把文件名（不含路径）写入 answer.txt。",
+      "fixture": {
+        "files": {
+          "src/core.rs": "pub fn core() {}\n",
+          "src/nested/inner.rs": "pub fn inner() {}\n// MARKER-TOKEN-42\n",
+          "src/legacy.txt": "MARKER-TOKEN-42\n",
+          "docs/notes.md": "MARKER-TOKEN-42\n"
+        }
+      },
+      "verify": {
+        "type": "all_of",
+        "all_of": [
+          { "type": "file_equals", "path": "answer.txt", "text": "inner.rs" },
+          { "type": "stdout_contains", "text": "→ grep" }
+        ]
+      },
+      "max_steps": 8,
+      "notes": "内置 grep 的回归保护：标记同时出现在 .txt 与 .md 里，只有限定 .rs 才能唯一命中；目标在二级子目录，顺带验证递归。"
     }
   ]
 }

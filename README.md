@@ -14,7 +14,7 @@
 <img alt="license" src="https://img.shields.io/badge/license-MIT-blue">
 <img alt="rust" src="https://img.shields.io/badge/rust-1.77%2B-orange">
 <img alt="platform" src="https://img.shields.io/badge/platform-linux%20%7C%20wsl%20%7C%20windows-lightgrey">
-<img alt="tests" src="https://img.shields.io/badge/tests-97%20passing-brightgreen">
+<img alt="tests" src="https://img.shields.io/badge/tests-99%20passing-brightgreen">
 <img alt="ci" src="https://github.com/176336109/dsh_mini_cli/actions/workflows/ci.yml/badge.svg">
 </p>
 
@@ -340,17 +340,17 @@ Landlock 只管文件系统（ABI v4 起兼管 TCP 端口），不等于容器�
 cargo build --bins
 python evals/run_evals.py --self-test     # 断言器自检，必须 12/12
 python evals/run_evals.py --smoke         # 管道自检（mock，不花钱），必须 PASS
-python evals/run_evals.py --model deepseek-flash   # 全量 51 条
+python evals/run_evals.py --model deepseek-flash   # 全量 53 条
 ```
 
-- **51 条用例，9 类**：edit 8 / debug 7 / locate 6 / honesty 6 / delivery 6 / env 5 / refactor 5 / long 5 / mcp 3。
+- **53 条用例，9 类**：edit 8 / debug 7 / locate 7 / honesty 6 / delivery 6 / env 6 / refactor 5 / long 5 / mcp 3。
 - 断言类型：`file_exists`、`file_equals`、`file_contains`、`file_not_contains`、`file_regex`、`command`、`stdout_contains`、`stdout_regex`、`all_of`。
 - 支持 `-k <id>` 单跑、`--category` 分类跑、`--repeat N` 看稳定性。
 - 报告与现场取证：`evals/.runs/<时间戳>/report.json` 与每个用例的工作区 + `.home/sessions/*.jsonl`。
 
 三条评测卫生规矩：**不改断言迁就模型**、**不删历史批次**、**不把"是否交付"写进框架做启发式检测**（这类判断不可泛化，只能改提示词或加用例）。
 
-当前基线（deepseek-flash，2026-11-23）：**51/51**，293 步 / 49.8 万输入 token / 2.5 万输出 token，单条均值约 9.8k 输入 token、5.7 步。
+当前基线（deepseek-flash，2026-11-23）：**53/53**，292 步 / 58.2 万输入 token / 2.6 万输出 token，单条均值约 11k 输入 token、5.5 步。
 
 两处提示词与工具改进把"追加类"和"范围类"用例的步数砍掉了一半（`B7`/`P5` 8→4 步，`P1` 7→4 步）：`read_file` 现在直接报告文件末尾状态，提示词明确"改文件不用 shell 重定向""只处理用户指定的范围"。
 
@@ -417,7 +417,7 @@ python evals/run_evals.py --model deepseek-flash   # 全量 51 条
 ## 贡献
 
 ```sh
-cargo test --workspace            # 97 项
+cargo test --workspace            # 99 项
 cargo clippy --all-targets        # 零告警
 cargo fmt --all --check
 python evals/run_evals.py --self-test && python evals/run_evals.py --smoke
