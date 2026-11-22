@@ -98,6 +98,54 @@ impl DotEnv {
     }
 }
 
+/// 去掉 UTF-8 BOM。
+///
+/// Windows 上的记事本 / PowerShell `Set-Content -Encoding utf8` 都会写 BOM；
+/// BOM 混进提示词或密钥里不会有任何报错，只会让人怀疑人生。
+pub fn strip_bom(text: &str) -> &str {
+    text.strip_prefix('\u{feff}').unwrap_or(text)
+}
+
+/// 从文件读密钥：取第一行非空、非注释的内容。
+///
+/// 专为 systemd `LoadCredential=` / Docker secrets 准备 —— 那种文件里只有裸密钥，
+/// 没有 `KEY=` 前缀，也不该被塞进 argv（`/proc/<pid>/cmdline` 全世界可见）。
+pub fn read_key_file(path: &Path) -> Result<String, String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|err| format!("读不到 key 文件 {}：{err}", path.display()))?;
+
+    let key = strip_bom(&text)
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty() && !line.starts_with('#'))
+        .ok_or_else(|| format!("key 文件 {} 里没有内容", path.display()))?;
+    let key = key.trim_matches('"').trim_matches('\'').trim();
+    if key.is_empty() {
+        return Err(format!("key 文件 {} 里没有有效内容", path.display()));
+    }
+
+    warn_if_world_readable(path);
+    Ok(key.to_string())
+}
+
+/// Unix 上顺手检查权限：密钥文件被任何用户可读是常见部署事故。
+#[cfg(unix)]
+fn warn_if_world_readable(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    if let Ok(meta) = std::fs::metadata(path) {
+        let mode = meta.permissions().mode() & 0o777;
+        if mode & 0o077 != 0 {
+            eprintln!(
+                "警告：{} 的权限是 {mode:o}，建议 chmod 600（同组/其他用户可读）",
+                path.display()
+            );
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn warn_if_world_readable(_path: &Path) {}
+
 /// 打码后的密钥，用于启动提示。无论密钥多短都不会漏出完整值。
 pub fn mask(secret: &str) -> String {
     if secret.chars().count() <= 10 {
@@ -148,5 +196,34 @@ mod tests {
     fn mask_never_leaks_short_secrets() {
         assert_eq!(mask("short"), "***");
         assert_eq!(mask("sk-1234567890abcdef"), "sk-123…cdef");
+    }
+
+    fn temp_file(tag: &str, content: &str) -> PathBuf {
+        let mut path = std::env::temp_dir();
+        path.push(format!("dsh-mini-key-{tag}-{}.txt", core_session::now_ms()));
+        std::fs::write(&path, content).unwrap();
+        path
+    }
+
+    #[test]
+    fn key_file_takes_the_first_meaningful_line() {
+        let path = temp_file("first", "\n# systemd 注释\n  \"sk-abc123\"  \nsk-second\n");
+        assert_eq!(read_key_file(&path).unwrap(), "sk-abc123");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn key_file_strips_utf8_bom() {
+        // 记事本与 PowerShell 的 utf8 都会写 BOM；带进密钥里只会在 401 时才被发现。
+        let path = temp_file("bom", "\u{feff}sk-bom123456789");
+        assert_eq!(read_key_file(&path).unwrap(), "sk-bom123456789");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn empty_key_file_is_rejected() {
+        let path = temp_file("empty", "\n\n# 只有注释\n");
+        assert!(read_key_file(&path).is_err());
+        let _ = std::fs::remove_file(&path);
     }
 }

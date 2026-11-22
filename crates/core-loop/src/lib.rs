@@ -20,6 +20,7 @@
 //! ```
 
 mod prompt;
+pub mod skills;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -29,7 +30,7 @@ use core_llm::{Completion, ContentBlock, LlmAdapter, LlmError, LlmEvent, LlmRequ
 use core_session::{now_ms, SessionEvent, SessionLog, SessionSink, TurnEndReason};
 use core_tools::{Guard, Registry, ToolCtx};
 
-pub use prompt::EnvFacts;
+pub use prompt::{EnvFacts, ProjectRules, PromptContext, SkillMeta};
 
 #[derive(Debug, Clone)]
 pub struct LoopConfig {
@@ -109,18 +110,16 @@ pub struct AgentLoop {
     log: SessionLog,
     /// 增量落盘；每条事件写一次，崩溃只丢当前事件而不是整个 turn。
     sink: Option<Box<dyn SessionSink>>,
+    /// 提示里的外部输入（Agents.md + 技能索引）。
+    prompt_ctx: PromptContext,
+    /// 文件工具的额外只读根（例如技能目录）。写范围仍然只有 cwd。
+    read_roots: Vec<PathBuf>,
 }
 
 impl AgentLoop {
     pub fn new(llm: Arc<dyn LlmAdapter>, tools: Arc<Registry>, cfg: LoopConfig) -> Self {
         let log = SessionLog::new(format!("s{}", now_ms()));
-        Self {
-            llm,
-            tools,
-            cfg,
-            log,
-            sink: None,
-        }
+        Self::resume(llm, tools, cfg, log)
     }
 
     /// 从已有日志续跑：`next_seq` 与 turn 编号都接着走。
@@ -136,6 +135,8 @@ impl AgentLoop {
             cfg,
             log,
             sink: None,
+            prompt_ctx: PromptContext::default(),
+            read_roots: Vec::new(),
         }
     }
 
@@ -143,6 +144,25 @@ impl AgentLoop {
     pub fn with_sink(mut self, sink: Box<dyn SessionSink>) -> Self {
         self.sink = Some(sink);
         self
+    }
+
+    /// 注入项目约定与技能索引。
+    ///
+    /// 只影响**首次**生成的系统提示：续跑会话时系统提示来自日志，换了文件也不会
+    /// 让上下文漂移。
+    pub fn with_prompt_context(mut self, context: PromptContext) -> Self {
+        self.prompt_ctx = context;
+        self
+    }
+
+    /// 给文件工具加只读根。写操作仍然只能落在 `cwd`。
+    pub fn with_read_roots(mut self, roots: Vec<PathBuf>) -> Self {
+        self.read_roots = roots;
+        self
+    }
+
+    pub fn prompt_context(&self) -> &PromptContext {
+        &self.prompt_ctx
     }
 
     pub fn log(&self) -> &SessionLog {
@@ -168,11 +188,14 @@ impl AgentLoop {
     }
 
     fn system_prompt(&self) -> String {
-        prompt::build(&EnvFacts {
-            cwd: &self.cfg.cwd,
-            model: &self.cfg.model,
-            tools: self.tools.name_slice(),
-        })
+        prompt::build(
+            &EnvFacts {
+                cwd: &self.cfg.cwd,
+                model: &self.cfg.model,
+                tools: self.tools.name_slice(),
+            },
+            &self.prompt_ctx,
+        )
     }
 
     /// 跑一个 turn。输入为空时仍会开/关一个 turn（0 step），与 dsh 一致。
@@ -183,7 +206,9 @@ impl AgentLoop {
         emit: &mut (dyn FnMut(LoopEvent) + Send),
     ) -> Result<TurnOutcome, LoopError> {
         let turn = self.log.turn_count() + 1;
-        let ctx = ToolCtx::new(&self.cfg.cwd).with_timeout(self.cfg.tool_timeout);
+        let ctx = ToolCtx::new(&self.cfg.cwd)
+            .with_timeout(self.cfg.tool_timeout)
+            .with_read_roots(self.read_roots.iter().cloned());
 
         if !self.log.started() {
             let cwd = self.cfg.cwd.display().to_string();
@@ -512,6 +537,51 @@ mod tests {
         assert_eq!(recorded, in_memory, "落盘顺序必须与内存日志一致");
         assert_eq!(recorded.first().map(String::as_str), Some("session/start"));
         assert_eq!(recorded.last().map(String::as_str), Some("turn/end"));
+    }
+
+    #[tokio::test]
+    async fn prompt_context_lands_in_the_logged_system_message() {
+        let mut agent = build_loop()
+            .with_prompt_context(PromptContext {
+                project_rules: Some(ProjectRules {
+                    source: "/w/Agents.md".into(),
+                    text: "- 目标平台是 Linux".into(),
+                    original_bytes: 24,
+                }),
+                extra_instructions: Some("- 只用 rustls".into()),
+                skills: vec![SkillMeta {
+                    name: "eval".into(),
+                    description: "跑评测".into(),
+                    path: "/w/skills/eval/SKILL.md".into(),
+                }],
+            })
+            .with_read_roots(vec![PathBuf::from("/w/skills")]);
+
+        let mut sink = |_e: LoopEvent| {};
+        agent
+            .run_turn("做事", &core_tools::AllowAll, &mut sink)
+            .await
+            .unwrap();
+
+        // 系统提示必须真的进了日志：否则 --resume 会退化成"没有约定"的会话。
+        let system: String = agent
+            .log()
+            .replay()
+            .iter()
+            .find_map(|message| match message {
+                core_llm::Message::System { content } => Some(
+                    content
+                        .iter()
+                        .map(|block| block.as_str())
+                        .collect::<String>(),
+                ),
+                _ => None,
+            })
+            .expect("应当有 system 消息");
+        assert!(system.contains("# 项目约定"), "{system}");
+        assert!(system.contains("目标平台是 Linux"));
+        assert!(system.contains("# 可用技能"));
+        assert!(system.contains("/w/skills/eval/SKILL.md"));
     }
 
     #[tokio::test]

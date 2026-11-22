@@ -19,10 +19,10 @@ use std::time::Duration;
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use core_llm::LlmAdapter;
-use core_loop::{AgentLoop, LoopConfig};
+use core_loop::{AgentLoop, LoopConfig, ProjectRules, PromptContext};
 use core_session::{now_ms, SessionLog, TurnEndReason};
 use core_tools::sandbox::{select as select_sandbox, SandboxKind};
-use core_tools::{AllowAll, Registry};
+use core_tools::{head_chars, AllowAll, Registry};
 use providers::tools::path::normalize;
 use providers::tools::{BashTool, ListDirTool, ReadFileTool, StrReplaceTool, WriteFileTool};
 use providers::{register_server, DeepSeekAdapter, JsonlStore, McpConfig, MockAdapter};
@@ -97,6 +97,27 @@ async fn run_agent(cli: Cli) -> Result<ExitCode> {
     let tool_names = registry.names().join(",");
     let tools = Arc::new(registry);
 
+    // 项目约定 + 技能索引：只在首次生成系统提示时用到（续跑沿用日志里的那一份）。
+    let project_rules = load_project_rules(&cli, &cwd)?;
+    let skills_dir = match &cli.skills_dir {
+        Some(dir) => Some(absolute(dir)?),
+        None => None,
+    };
+    let mut skills = Vec::new();
+    if let Some(dir) = &skills_dir {
+        let scan = core_loop::skills::scan(dir);
+        for warning in &scan.warnings {
+            eprintln!("警告：{warning}");
+        }
+        skills = scan.skills;
+    }
+    let extra_instructions = load_extra_instructions(&cli)?;
+    let prompt_ctx = PromptContext {
+        project_rules,
+        extra_instructions,
+        skills,
+    };
+
     let llm = build_adapter(&cli, &dotenv)?;
     let cfg = LoopConfig {
         model: cli.model.clone(),
@@ -132,7 +153,10 @@ async fn run_agent(cli: Cli) -> Result<ExitCode> {
     };
 
     let session_id = log.id().to_string();
-    let mut agent = AgentLoop::resume(llm, tools, cfg, log);
+    let mut agent = AgentLoop::resume(llm, tools, cfg, log)
+        .with_prompt_context(prompt_ctx.clone())
+        // 技能目录同时作为文件工具的只读根：模型要能 read_file 到 SKILL.md 正文。
+        .with_read_roots(skills_dir.iter().cloned().collect());
 
     // 逐条落盘的句柄：整个会话只打开一次文件。磁盘不可写时降级为纯内存运行，
     // 不让"日志写不进去"变成"任务跑不了"。
@@ -162,6 +186,14 @@ async fn run_agent(cli: Cli) -> Result<ExitCode> {
             format!("{} MB", cli.history_budget)
         }
     );
+    if resumed_events > 0 {
+        eprintln!(
+            "提示 · 沿用日志里的系统提示（{} 不看本次的约定/技能）",
+            session_id
+        );
+    } else {
+        eprintln!("提示 · {}", prompt_ctx.summary());
+    }
 
     let mut sink = print_event;
 
@@ -205,15 +237,67 @@ async fn interactive(
     Ok(())
 }
 
+/// 系统提示里项目约定的字符上限。Agents.md 是给人看的，正常几百到几千字。
+const MAX_PROJECT_RULES_CHARS: usize = 16_000;
+
+/// 读取项目约定：`--agents-file` 优先，否则自动找 `<cwd>/Agents.md`。
+fn load_project_rules(cli: &Cli, cwd: &Path) -> Result<Option<ProjectRules>> {
+    let path = match &cli.agents_file {
+        Some(path) => Some(absolute(path)?),
+        None => ["Agents.md", "AGENTS.md"]
+            .iter()
+            .map(|name| cwd.join(name))
+            .find(|candidate| candidate.is_file()),
+    };
+
+    let Some(path) = path else { return Ok(None) };
+    let bytes = std::fs::read(&path).with_context(|| format!("读不到 {}", path.display()))?;
+    let original_bytes = bytes.len();
+    let text = String::from_utf8_lossy(&bytes);
+    let text = head_chars(env::strip_bom(&text), MAX_PROJECT_RULES_CHARS);
+    eprintln!("约定 · {}（{original_bytes} 字节）", path.display());
+
+    Ok(Some(ProjectRules {
+        source: path.display().to_string(),
+        text: text.to_string(),
+        original_bytes,
+    }))
+}
+
+/// 读取命令行显式给的附加指令：`--system-file` 优先于 `--system-prompt`。
+fn load_extra_instructions(cli: &Cli) -> Result<Option<String>> {
+    let text = match (&cli.system_file, &cli.system_prompt) {
+        (Some(path), _) => {
+            let path = absolute(path)?;
+            let bytes =
+                std::fs::read(&path).with_context(|| format!("读不到 {}", path.display()))?;
+            eprintln!("附加指令 · {}（{} 字节）", path.display(), bytes.len());
+            String::from_utf8_lossy(&bytes).into_owned()
+        }
+        (None, Some(text)) => text.clone(),
+        (None, None) => return Ok(None),
+    };
+
+    let text = env::strip_bom(&text).trim();
+    if text.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(head_chars(text, MAX_PROJECT_RULES_CHARS).to_string()))
+}
+
 fn build_adapter(cli: &Cli, dotenv: &DotEnv) -> Result<Arc<dyn LlmAdapter>> {
     if cli.model == "mock" {
         eprintln!("模型 · mock（离线，不联网）");
         return Ok(Arc::new(MockAdapter::auto()));
     }
 
-    let key = dotenv.lookup("DEEPSEEK_API_KEY").context(
-        "找不到 DEEPSEEK_API_KEY。设置环境变量，或写入 ~/.dsh-mini/.env（一行 DEEPSEEK_API_KEY=sk-...）",
-    )?;
+    // 显式给的文件优先：systemd LoadCredential / Docker secrets 都是裸文件。
+    let key = match &cli.key_file {
+        Some(path) => env::read_key_file(path).map_err(|err| anyhow!(err))?,
+        None => dotenv.lookup("DEEPSEEK_API_KEY").context(
+            "找不到 DEEPSEEK_API_KEY。设置环境变量、用 --key-file <file>，或写入 ~/.dsh-mini/.env",
+        )?,
+    };
     let base_url = dotenv
         .lookup("DEEPSEEK_BASE_URL")
         .unwrap_or_else(|| cli.base_url.clone());

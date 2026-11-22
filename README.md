@@ -14,7 +14,7 @@
 <img alt="license" src="https://img.shields.io/badge/license-MIT-blue">
 <img alt="rust" src="https://img.shields.io/badge/rust-1.77%2B-orange">
 <img alt="platform" src="https://img.shields.io/badge/platform-linux%20%7C%20wsl%20%7C%20windows-lightgrey">
-<img alt="tests" src="https://img.shields.io/badge/tests-70%20passing-brightgreen">
+<img alt="tests" src="https://img.shields.io/badge/tests-84%20passing-brightgreen">
 </p>
 
 ---
@@ -28,6 +28,7 @@
 - [架构](#架构)
 - [与 dsh 的差异](#与-dsh-的差异)
 - [工具集](#工具集)
+- [项目约定与技能](#项目约定与技能)
 - [安全模型](#安全模型)
 - [性能与内存](#性能与内存)
 - [评测](#评测)
@@ -99,6 +100,12 @@ echo 'DEEPSEEK_API_KEY=sk-...' > ~/.dsh-mini/.env    # 全局
 
 ```sh
 dsh-mini --base-url http://10.0.0.5:8000/v1 "改个 bug"
+```
+
+密钥也不一定要写在 `.env` 里：`--key-file` 会读文件的第一行非空内容，专给 systemd `LoadCredential=` / Docker secrets 这类"裸文件"场景（**Key 永远不会出现在 argv 里**）：
+
+```sh
+dsh-mini --key-file /run/credentials/dsh-mini.service/deepseek-key "..."
 ```
 
 ### 跑起来
@@ -210,12 +217,66 @@ MCP 的用法和别的接缝不同：它不是一个可替换的 provider，而�
 | 工具 | 说明 | 兜底 |
 |---|---|---|
 | `bash` | 执行一条 shell 命令（Linux `sh -c`，Windows `cmd /C`） | 单流输出 ≤ 64 KiB（超限杀进程）、单次 ≤ `--tool-timeout` |
-| `read_file` | 带行号读取，支持 `offset`/`limit` | 流式读，只保留请求窗口 |
+| `read_file` | 带行号读取，支持 `offset`/`limit` | 流式读只保留窗口；末尾状态（是否到 EOF、有没有换行）随结果返回，模型不必再用 `od`/`certutil` 探字节 |
 | `write_file` | 整体覆盖写入，自动建目录 | 路径必须在 `--cwd` 内 |
 | `str_replace` | 唯一匹配的字符串替换 | 唯一性检查、CRLF 容错、路径约束 |
 | `list_dir` | 列目录，目录以 `/` 结尾 | 单次 ≤ 1000 项 |
 
 阶段产出统一经过 `Registry` 的归一化管线：**任何失败都变成 `is_error` 的 `tool/result`，绝不向上抛** —— 模型必须看到失败原因才能自我纠正。
+
+---
+
+## 项目约定与技能
+
+两个"外部知识"入口，都在启动期一次性读取，不参与循环热路径。
+
+### 项目约定（Agents.md）
+
+默认自动发现 `<cwd>/Agents.md`（或 `AGENTS.md`），也可以用 `--agents-file` 指定。内容作为独立分节注入系统提示，并标注来源路径与截断情况（上限 16000 字符）：
+
+```sh
+dsh-mini --agents-file docs/AGENTS.md "按项目约定改一下 CI"
+```
+
+注入结果**写进会话日志里的 `system/message` 事件**，所以 `--resume` 沿用的是当时那份约定 —— 之后改了 `Agents.md` 也不会让正在续跑的会话上下文漂移。
+
+### 附加指令（本次运行）
+
+`--system-prompt` / `--system-file` 把一段指令追加到系统提示的**最后一节**，优先级高于内置规则与项目约定：
+
+```sh
+dsh-mini --system-prompt "只改 Rust 文件，不要碰 Cargo.lock" "修一下 lint"
+dsh-mini --system-file ./ci/reviewer-rules.md "按评审规则过一遍"
+```
+
+它和 `Agents.md` 的区别是作用域：`Agents.md` 跟着仓库走（谁跑都生效），附加指令跟着这一次调用走（CI 里给某个 job 临时加约束）。两者都写进会话日志的系统消息。
+
+### 技能（SKILL.md）
+
+`--skills-dir <DIR>` 扫描 `<DIR>/*/SKILL.md`，只把 `name` / `description` 收进提示，正文留给模型按需 `read_file`：
+
+```text
+skills/
+└── dsh-mini-eval/
+    └── SKILL.md      # 开头可选 frontmatter：name / description
+```
+
+```sh
+dsh-mini --skills-dir .claude/skills "跑一遍回归"
+```
+
+三个设计点：
+
+- **按需付费**：技能正文动辄几千字，全塞进提示会把工作上下文挤掉；只给"名字 + 一句话 + 路径"。
+- **只读根**：技能目录会自动加入文件工具的只读根，因此放在工作目录之外也能被 `read_file` 读到；**写**依然只能在 `--cwd` 内。
+- **上限**：最多 32 个技能、单条描述 200 字符，超出截断并告警。
+
+启动行会把注入情况打出来，避免"以为注入了其实没有"：
+
+```
+约定 · /wks/repo/Agents.md（647 字节）
+提示 · 约定=/wks/repo/Agents.md（647 字节） · 技能=2 个
+```
 
 ---
 
@@ -284,7 +345,11 @@ python evals/run_evals.py --model deepseek-flash   # 全量 51 条
 
 三条评测卫生规矩：**不改断言迁就模型**、**不删历史批次**、**不把"是否交付"写进框架做启发式检测**（这类判断不可泛化，只能改提示词或加用例）。
 
-当前基线（deepseek-flash，2026-11-23）：**51/51**，单条均值约 10k 输入 token / 6 步。已知波动：`E4`（统计日志里的出现次数）在 Windows 上会偶发因为先试 `grep`/`powershell` 而耗尽 `max_steps`，Linux 上不复现。模型没有随机种子，关键结论请用 `--repeat 3` 复核。
+当前基线（deepseek-flash，2026-11-23）：**51/51**，293 步 / 49.8 万输入 token / 2.5 万输出 token，单条均值约 9.8k 输入 token、5.7 步。
+
+两处提示词与工具改进把"追加类"和"范围类"用例的步数砍掉了一半（`B7`/`P5` 8→4 步，`P1` 7→4 步）：`read_file` 现在直接报告文件末尾状态，提示词明确"改文件不用 shell 重定向""只处理用户指定的范围"。
+
+模型没有随机种子，单次全绿不等于稳定；关键结论请用 `--repeat 3` 复核。
 
 ---
 
@@ -302,6 +367,11 @@ python evals/run_evals.py --model deepseek-flash   # 全量 51 条
 | `--resume [<ID>]` | — | 续跑会话，无参取最近一个 |
 | `--mcp <FILE>` | — | MCP 服务器配置（JSON） |
 | `--sandbox <MODE>` | `auto` | `auto` / `none` / `landlock` |
+| `--agents-file <FILE>` | `<cwd>/Agents.md`（自动） | 项目约定，注入系统提示 |
+| `--system-prompt <TEXT>` | — | 附加指令（内联），排在提示最后一节，优先级最高 |
+| `--system-file <FILE>` | — | 附加指令（文件），与 `--system-prompt` 同时给时以它为准 |
+| `--skills-dir <DIR>` | — | 技能目录，只注入索引；目录同时成为只读根 |
+| `--key-file <FILE>` | — | 从文件读 API Key（取第一个非空行） |
 | `--tool-timeout <SECS>` | `120` | 单次工具执行超时，超时整组 kill |
 | `--history-budget <MB>` | `2` | 模型可见历史预算，`0` 关闭压缩 |
 
@@ -324,13 +394,13 @@ python evals/run_evals.py --model deepseek-flash   # 全量 51 条
 ## 已知边界
 
 - **不做的能力**：subagent、多模型路由、compaction 改写、ACP、HTTP+SSE 传输的 MCP、MCP 分页。
+- **技能只做"索引 + 按需读取"**：没有自动触发、没有技能编排、没有脚本执行沙箱之外的额外约束。
 - **Landlock 是文件系统沙箱**，不是容器；联网与 fork 不受限。
 - **Windows 仅作开发机**：没有进程组回收的等价物（需要 Job Object），`--sandbox auto` 会退化为 `none` 并告警。
 - **会话日志在内存中随对话增长**，只有投影受 `--history-budget` 约束；磁盘侧不做轮转。
 
 路线图（欢迎 PR）：
 
-- [ ] `--agents-file` / `--skills-dir`：把项目约定（`Agents.md`）与技能目录注入系统提示
 - [ ] GitHub Actions：Linux 全量测试 + `aarch64` 交叉编译产物
 - [ ] `grep` / `glob` 工具（减少模型退化成 `bash` 拼命令）
 - [ ] MCP HTTP 传输与分页
@@ -342,7 +412,7 @@ python evals/run_evals.py --model deepseek-flash   # 全量 51 条
 ## 贡献
 
 ```sh
-cargo test --workspace            # 70 项
+cargo test --workspace            # 84 项
 cargo clippy --all-targets        # 零告警
 cargo fmt --all --check
 python evals/run_evals.py --self-test && python evals/run_evals.py --smoke

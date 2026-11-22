@@ -39,25 +39,18 @@ pub enum ToolError {
 
 #[derive(Debug, Clone)]
 pub struct ToolCtx {
-    /// 工具的相对路径基准。沙箱生效后同时是唯一可写根。
+    /// 工具的相对路径基准。同时是**唯一可写根**。
     pub cwd: PathBuf,
+    /// 额外的**只读**根（比如 `--skills-dir`）。写操作永远只能在 `cwd` 内。
+    pub read_roots: Vec<PathBuf>,
     pub timeout: Duration,
 }
 
 impl ToolCtx {
     pub fn new(cwd: impl Into<PathBuf>) -> Self {
-        let cwd = cwd.into();
-        // 相对工作目录按进程当前目录展开一次：后面的越界判断需要绝对路径做基准。
-        // 不用 canonicalize —— 它会引入 Windows 的 `\\?\` 前缀，且要求目录已存在。
-        let cwd = if cwd.is_absolute() {
-            cwd
-        } else {
-            std::env::current_dir()
-                .map(|base| base.join(&cwd))
-                .unwrap_or(cwd)
-        };
         Self {
-            cwd,
+            cwd: absolutize(cwd.into()),
+            read_roots: Vec::new(),
             timeout: Duration::from_secs(120),
         }
     }
@@ -65,6 +58,27 @@ impl ToolCtx {
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self
+    }
+
+    pub fn with_read_roots<I>(mut self, roots: I) -> Self
+    where
+        I: IntoIterator<Item = PathBuf>,
+    {
+        self.read_roots = roots.into_iter().map(absolutize).collect();
+        self
+    }
+}
+
+/// 相对路径按进程当前目录展开一次：越界判断需要绝对路径做基准。
+///
+/// 不用 `canonicalize` —— 它会引入 Windows 的 `\\?\` 前缀，且要求目录已存在。
+fn absolutize(path: PathBuf) -> PathBuf {
+    if path.is_absolute() {
+        path
+    } else {
+        std::env::current_dir()
+            .map(|base| base.join(&path))
+            .unwrap_or(path)
     }
 }
 

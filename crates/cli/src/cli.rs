@@ -50,6 +50,28 @@ pub struct Cli {
     #[arg(long, default_value = "auto", value_name = "MODE")]
     pub sandbox: String,
 
+    /// 项目约定文件（默认自动找 <cwd>/Agents.md）。内容会注入系统提示。
+    #[arg(long, value_name = "FILE")]
+    pub agents_file: Option<PathBuf>,
+
+    /// 附加到系统提示末尾的指令（内联文本）。与 --system-file 同时给时以后者为准。
+    #[arg(long, value_name = "TEXT")]
+    pub system_prompt: Option<String>,
+
+    /// 附加到系统提示末尾的指令（从文件读）。
+    #[arg(long, value_name = "FILE")]
+    pub system_file: Option<PathBuf>,
+
+    /// 技能目录：扫描 <DIR>/*/SKILL.md，只把名字与描述注入系统提示，
+    /// 正文由模型按需 read_file。该目录同时加入文件工具的只读根。
+    #[arg(long, value_name = "DIR")]
+    pub skills_dir: Option<PathBuf>,
+
+    /// 从文件读 API Key（取第一行非空内容）。用于 systemd LoadCredential /
+    /// Docker secrets 这类"密钥在文件里、且不叫 DEEPSEEK_API_KEY"的场景。
+    #[arg(long, value_name = "FILE")]
+    pub key_file: Option<PathBuf>,
+
     /// 单次工具执行超时（秒）。超时后整个进程组被杀掉。
     #[arg(long, default_value_t = 120, value_name = "SECS")]
     pub tool_timeout: u64,
