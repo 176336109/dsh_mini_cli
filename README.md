@@ -15,6 +15,7 @@
 <img alt="rust" src="https://img.shields.io/badge/rust-1.77%2B-orange">
 <img alt="platform" src="https://img.shields.io/badge/platform-linux%20%7C%20wsl%20%7C%20windows-lightgrey">
 <img alt="tests" src="https://img.shields.io/badge/tests-97%20passing-brightgreen">
+<img alt="ci" src="https://github.com/176336109/dsh_mini_cli/actions/workflows/ci.yml/badge.svg">
 </p>
 
 ---
@@ -407,7 +408,7 @@ python evals/run_evals.py --model deepseek-flash   # 全量 51 条
 
 路线图（欢迎 PR）：
 
-- [ ] GitHub Actions：Linux 全量测试 + `aarch64` 交叉编译产物
+- [x] GitHub Actions：Linux 全量测试 + `aarch64` 交叉编译产物
 - [ ] MCP HTTP 传输与分页
 - [ ] Landlock 网络端口规则（ABI v4+）
 

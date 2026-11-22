@@ -1,0 +1,75 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Linux 是目标平台：测试、Lint、离线冒烟都在这条跑。
+  test:
+    name: test (linux x86_64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: fmt
+        run: cargo fmt --all --check
+
+      # Linux 目标会编译 Landlock / 进程组这些 cfg 专属代码，本地 Windows 编不到。
+      - name: clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: test
+        run: cargo test --workspace --locked
+
+      - name: build
+        run: cargo build --bins
+
+      # 不需要 API Key：断言器自检 + mock 模型跑通整条链路。
+      - name: eval self-test
+        run: python3 evals/run_evals.py --self-test
+
+      - name: eval smoke
+        run: python3 evals/run_evals.py --smoke
+
+  # 车机常见形态是 ARM64：确认交叉编译这条链路没断。
+  build-aarch64:
+    name: build (aarch64 linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: install cross linker
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: build
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        run: cargo build --release --locked --target aarch64-unknown-linux-gnu
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dsh-mini-aarch64-unknown-linux-gnu
+          path: |
+            target/aarch64-unknown-linux-gnu/release/dsh-mini
+            target/aarch64-unknown-linux-gnu/release/mock-mcp-server
+          if-no-files-found: error
