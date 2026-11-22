@@ -95,6 +95,12 @@ echo 'DEEPSEEK_API_KEY=sk-...' > ~/.dsh-mini/.env    # 全局
 `.env` 支持 `export` 前缀、单双引号与 `#` 注释，和 `/bin/sh` 的写法一致，可以直接复用 `EnvironmentFile`。
 也支持在 `.env` 里覆盖 `DEEPSEEK_BASE_URL`（私有网关 / 离线部署）。
 
+走网关或反向代理时，把 `--base-url` 指向它就够了：
+
+```sh
+dsh-mini --base-url http://10.0.0.5:8000/v1 "改个 bug"
+```
+
 ### 跑起来
 
 ```sh
@@ -324,10 +330,12 @@ python evals/run_evals.py --model deepseek-flash   # 全量 51 条
 
 路线图（欢迎 PR）：
 
+- [ ] `--agents-file` / `--skills-dir`：把项目约定（`Agents.md`）与技能目录注入系统提示
 - [ ] GitHub Actions：Linux 全量测试 + `aarch64` 交叉编译产物
 - [ ] `grep` / `glob` 工具（减少模型退化成 `bash` 拼命令）
 - [ ] MCP HTTP 传输与分页
 - [ ] Landlock 网络端口规则（ABI v4+）
+- [ ] 显式的 HTTP(S) 代理参数
 
 ---
 
