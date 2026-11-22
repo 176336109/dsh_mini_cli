@@ -24,7 +24,9 @@ use core_session::{now_ms, SessionLog, TurnEndReason};
 use core_tools::sandbox::{select as select_sandbox, SandboxKind};
 use core_tools::{head_chars, AllowAll, Registry};
 use providers::tools::path::normalize;
-use providers::tools::{BashTool, ListDirTool, ReadFileTool, StrReplaceTool, WriteFileTool};
+use providers::tools::{
+    BashTool, GlobTool, GrepTool, ListDirTool, ReadFileTool, StrReplaceTool, WriteFileTool,
+};
 use providers::{register_server, DeepSeekAdapter, JsonlStore, McpConfig, MockAdapter};
 use tokio::io::{AsyncBufReadExt, BufReader};
 
@@ -80,7 +82,9 @@ async fn run_agent(cli: Cli) -> Result<ExitCode> {
         .with(ReadFileTool)
         .with(WriteFileTool)
         .with(StrReplaceTool)
-        .with(ListDirTool);
+        .with(ListDirTool)
+        .with(GrepTool)
+        .with(GlobTool);
 
     if let Some(path) = &cli.mcp {
         let config = McpConfig::load(path)?;

@@ -7,14 +7,19 @@
 //! 模块划分：
 //! - [`bash`]：唯一的"任意代码执行"入口，输出必须边读边限。
 //! - [`fs`]：四个文件工具，路径一律走 [`path::resolve`]。
+//! - [`search`]：内置 `grep` / `glob`，让搜索不必退化成 `bash` 拼命令。
 //! - [`path`]：把相对/绝对路径钉回工作目录的词法约束。
+//! - [`glob`]：`*` / `**` / `?` 的极简匹配器。
 
 pub mod bash;
 pub mod fs;
+pub mod glob;
 pub mod path;
+pub mod search;
 
 pub use bash::BashTool;
 pub use fs::{ListDirTool, ReadFileTool, StrReplaceTool, WriteFileTool};
+pub use search::{GlobTool, GrepTool};
 
 use std::borrow::Cow;
 

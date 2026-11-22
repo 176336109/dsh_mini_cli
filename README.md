@@ -14,7 +14,7 @@
 <img alt="license" src="https://img.shields.io/badge/license-MIT-blue">
 <img alt="rust" src="https://img.shields.io/badge/rust-1.77%2B-orange">
 <img alt="platform" src="https://img.shields.io/badge/platform-linux%20%7C%20wsl%20%7C%20windows-lightgrey">
-<img alt="tests" src="https://img.shields.io/badge/tests-84%20passing-brightgreen">
+<img alt="tests" src="https://img.shields.io/badge/tests-95%20passing-brightgreen">
 </p>
 
 ---
@@ -59,7 +59,7 @@ dsh 本体是 TypeScript：338 个包、主干约 1.6 万行核心代码、依�
 ## 特性
 
 - **一个 turn = 若干 step 的确定性循环**：模型要工具就再问一次，不要就收尾；`max_steps` 兜住死循环。
-- **五个内置工具**：`bash`、`read_file`、`write_file`、`str_replace`、`list_dir`。
+- **七个内置工具**：`bash`、`read_file`、`write_file`、`str_replace`、`list_dir`、`grep`、`glob`。搜索不依赖系统命令，车机上没有 GNU 工具也能用。
 - **MCP 客户端**：stdio + 换行分帧的 JSON-RPC 2.0，远端工具注册后与内置工具完全同形（`mcp__<server>__<tool>`）。
 - **Landlock 沙箱**：只接管写类权限，可写范围钉死在 `--cwd`（外加 `TMPDIR` 与 `/dev/null`）；内核不支持就**拒绝启动**，而不是悄悄降级。
 - **追加式会话日志**：v4 信封子集，`--resume` 原样续跑；读侧遇到不认识的事件必须拒绝重建。
@@ -221,6 +221,8 @@ MCP 的用法和别的接缝不同：它不是一个可替换的 provider，而�
 | `write_file` | 整体覆盖写入，自动建目录 | 路径必须在 `--cwd` 内 |
 | `str_replace` | 唯一匹配的字符串替换 | 唯一性检查、CRLF 容错、路径约束 |
 | `list_dir` | 列目录，目录以 `/` 结尾 | 单次 ≤ 1000 项 |
+| `grep` | 按内容搜索，返回 `路径:行号: 内容`；支持 `include` glob 与 ASCII 忽略大小写 | 遍历 ≤ 2 万项、单文件 ≤ 2 MiB、≤ 200 条匹配、跳过二进制与 `.git`/`target`/`node_modules` |
+| `glob` | 按名字/路径查找文件（`*` 不跨目录、`**` 跨目录） | 遍历同上，≤ 500 条结果 |
 
 阶段产出统一经过 `Registry` 的归一化管线：**任何失败都变成 `is_error` 的 `tool/result`，绝不向上抛** —— 模型必须看到失败原因才能自我纠正。
 
@@ -402,7 +404,6 @@ python evals/run_evals.py --model deepseek-flash   # 全量 51 条
 路线图（欢迎 PR）：
 
 - [ ] GitHub Actions：Linux 全量测试 + `aarch64` 交叉编译产物
-- [ ] `grep` / `glob` 工具（减少模型退化成 `bash` 拼命令）
 - [ ] MCP HTTP 传输与分页
 - [ ] Landlock 网络端口规则（ABI v4+）
 - [ ] 显式的 HTTP(S) 代理参数
@@ -412,7 +413,7 @@ python evals/run_evals.py --model deepseek-flash   # 全量 51 条
 ## 贡献
 
 ```sh
-cargo test --workspace            # 84 项
+cargo test --workspace            # 95 项
 cargo clippy --all-targets        # 零告警
 cargo fmt --all --check
 python evals/run_evals.py --self-test && python evals/run_evals.py --smoke
