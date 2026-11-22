@@ -1,0 +1,21 @@
+[package]
+name = "dsh-mini"
+description = "A trimmed Rust reimplementation of the DeepSeek Harness core, targeting Linux"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "dsh-mini"
+path = "src/main.rs"
+
+[dependencies]
+core-llm = { workspace = true }
+core-session = { workspace = true }
+core-tools = { workspace = true }
+core-loop = { workspace = true }
+providers = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+tokio = { workspace = true }

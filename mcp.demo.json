@@ -1,0 +1,9 @@
+{
+  "servers": [
+    {
+      "name": "demo",
+      "command": "cargo",
+      "args": ["run", "-q", "--bin", "mock-mcp-server"]
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/core-llm",
+    "crates/core-session",
+    "crates/core-tools",
+    "crates/core-loop",
+    "crates/providers",
+    "crates/cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.77"
+license = "MIT"
+
+[workspace.dependencies]
+core-llm = { path = "crates/core-llm" }
+core-session = { path = "crates/core-session" }
+core-tools = { path = "crates/core-tools" }
+core-loop = { path = "crates/core-loop" }
+providers = { path = "crates/providers" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+anyhow = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "io-std", "fs", "time", "sync"] }
+clap = { version = "4", features = ["derive"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

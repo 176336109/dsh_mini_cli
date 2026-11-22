@@ -1,0 +1,19 @@
+# 构建产物
+/target
+/target-*
+**/*.rs.bk
+*.pdb
+*.exe
+
+# 本地运行数据（会话日志里可能有工作区内容，不进仓库）
+/.dsh-mini
+/.env
+
+# 评测现场：历史批次是回归对比的唯一证据，但体积大、含 fixture，不进仓库
+/evals/.runs
+
+# IDE agent 的工作目录（技能定义 + 工作记忆）
+/.workbuddy
+
+.DS_Store
+Thumbs.db

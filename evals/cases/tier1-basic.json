@@ -1,0 +1,335 @@
+{
+  "_about": "第一层：单点能力。定位事实、精确改动、读环境。这些失败说明基础手艺不行，后面的都不用看。",
+  "cases": [
+    {
+      "id": "A1",
+      "category": "locate",
+      "difficulty": 1,
+      "prompt": "只看 src 目录下的 .rs 文件，找出所有包含 TODO 的行（其他文件里的不算）。把「相对路径:行号」写进 answer.txt，按路径字母序、同文件内按行号升序，每行一条，不要写任何多余内容。",
+      "fixture": {
+        "files": {
+          "src/lib.rs": "pub fn a() {}\n// TODO: rename this\npub fn b() {}\n",
+          "src/util.rs": "// TODO: inline helper\npub fn c() {}\n\n// TODO: remove\npub fn d() {}\n",
+          "notes.txt": "// TODO: 这一行在 notes.txt 里，不算\n"
+        }
+      },
+      "verify": {
+        "type": "file_equals",
+        "path": "answer.txt",
+        "text": "src/lib.rs:2\nsrc/util.rs:1\nsrc/util.rs:4"
+      },
+      "max_steps": 10,
+      "notes": "考三件事：只扫指定目录/后缀、行号从 1 起、排序规则。notes.txt 是干扰项。"
+    },
+    {
+      "id": "A2",
+      "category": "locate",
+      "difficulty": 2,
+      "prompt": "README 里说这个配置项叫 retry，但代码里序列化出来的键名可能不一样。以代码实际行为为准，把真实的键名单独写入 answer.txt（只写键名，不要引号不要解释）。",
+      "fixture": {
+        "files": {
+          "README.md": "# 配置说明\n\n使用 `retry` 控制重试次数。\n",
+          "src/config.rs": "use serde::Deserialize;\n\n#[derive(Deserialize)]\npub struct Config {\n    #[serde(rename = \"retries\")]\n    pub retry: u32,\n}\n"
+        }
+      },
+      "verify": {
+        "type": "file_equals",
+        "path": "answer.txt",
+        "text": "retries"
+      },
+      "max_steps": 10,
+      "notes": "文档与代码冲突时以代码为准。只会翻文档的会写 retry。"
+    },
+    {
+      "id": "A3",
+      "category": "locate",
+      "difficulty": 2,
+      "prompt": "crate a 直接依赖了哪些 workspace 内的 crate？把名字按字母序、逗号分隔写成一行到 answer.txt。不要带外部依赖，也不要带传递依赖。",
+      "fixture": {
+        "files": {
+          "Cargo.toml": "[workspace]\nmembers = [\"crates/a\", \"crates/b\", \"crates/c\"]\n",
+          "crates/a/Cargo.toml": "[package]\nname = \"a\"\n\n[dependencies]\nb = { path = \"../b\" }\nserde = \"1\"\n",
+          "crates/b/Cargo.toml": "[package]\nname = \"b\"\n\n[dependencies]\nc = { path = \"../c\" }\n",
+          "crates/c/Cargo.toml": "[package]\nname = \"c\"\n"
+        }
+      },
+      "verify": {
+        "type": "file_equals",
+        "path": "answer.txt",
+        "text": "b"
+      },
+      "max_steps": 10,
+      "notes": "直接 vs 传递（c）、内部 vs 外部（serde）。两个都要排除。"
+    },
+    {
+      "id": "A4",
+      "category": "locate",
+      "difficulty": 1,
+      "prompt": "src/handlers.rs 里参数最多的那个函数叫什么名字？只把函数名写入 answer.txt。",
+      "fixture": {
+        "files": {
+          "src/handlers.rs": "pub fn ping() {}\n\npub fn echo(text: &str) {}\n\npub fn route(path: &str, method: &str) -> bool {\n    !path.is_empty() && !method.is_empty()\n}\n\npub fn process_batch(items: Vec<i32>, limit: u32, offset: u32, tag: &str) -> usize {\n    items.len().saturating_sub(offset as usize).min(limit as usize) + tag.len()\n}\n"
+        }
+      },
+      "verify": {
+        "type": "file_equals",
+        "path": "answer.txt",
+        "text": "process_batch"
+      },
+      "max_steps": 8,
+      "notes": "不能只看行宽，要数参数。"
+    },
+    {
+      "id": "B1",
+      "category": "edit",
+      "difficulty": 1,
+      "prompt": "把 src/consts.rs 里 TIMEOUT_MS 的值从 3000 改成 5000。其他常量不要动。",
+      "fixture": {
+        "files": {
+          "src/consts.rs": "pub const TIMEOUT_MS: u64 = 3000;\npub const RETRY: u32 = 3;\npub const NAME: &str = \"demo\";\n"
+        }
+      },
+      "verify": {
+        "type": "all_of",
+        "all_of": [
+          { "type": "file_contains", "path": "src/consts.rs", "text": "TIMEOUT_MS: u64 = 5000" },
+          { "type": "file_contains", "path": "src/consts.rs", "text": "RETRY: u32 = 3" },
+          { "type": "file_not_contains", "path": "src/consts.rs", "text": "= 3000" }
+        ]
+      },
+      "max_steps": 8,
+      "notes": "改错行、顺手重排格式都会被抓。"
+    },
+    {
+      "id": "B2",
+      "category": "edit",
+      "difficulty": 2,
+      "prompt": "src/slice.rs 的 last_n 实现与它自己的文档注释不符：注释说返回最后 n 个元素，但实现多带了一个。请修正实现，注释保持原样。",
+      "fixture": {
+        "files": {
+          "src/slice.rs": "/// 返回 `v` 的最后 `n` 个元素。\npub fn last_n(v: &[i32], n: usize) -> &[i32] {\n    &v[v.len() - n - 1..]\n}\n"
+        }
+      },
+      "verify": {
+        "type": "all_of",
+        "all_of": [
+          { "type": "file_contains", "path": "src/slice.rs", "text": "&v[v.len() - n..]" },
+          { "type": "file_contains", "path": "src/slice.rs", "text": "/// 返回 `v` 的最后 `n` 个元素。" }
+        ]
+      },
+      "max_steps": 8,
+      "notes": "off-by-one。要能读注释推断意图，而不是只让代码不报错。"
+    },
+    {
+      "id": "B3",
+      "category": "edit",
+      "difficulty": 2,
+      "prompt": "src/lib.rs 里的 unused_helper 没有任何调用者，属于死代码。删掉它（含函数体），其余内容一字不动。",
+      "fixture": {
+        "files": {
+          "src/lib.rs": "pub fn used() -> u32 {\n    1\n}\n\nfn unused_helper(x: u32) -> u32 {\n    x * 2\n}\n\npub fn api() -> u32 {\n    used()\n}\n"
+        }
+      },
+      "verify": {
+        "type": "all_of",
+        "all_of": [
+          { "type": "file_not_contains", "path": "src/lib.rs", "text": "unused_helper" },
+          { "type": "file_contains", "path": "src/lib.rs", "text": "pub fn used() -> u32" },
+          { "type": "file_contains", "path": "src/lib.rs", "text": "pub fn api() -> u32" }
+        ]
+      },
+      "max_steps": 8,
+      "notes": "删除边界：别把相邻函数一起带走。"
+    },
+    {
+      "id": "B4",
+      "category": "edit",
+      "difficulty": 2,
+      "prompt": "在 src/job.rs 的 handle 函数体第一行插入一句 `eprintln!(\"enter handle\");`。其他逻辑一律不要改。",
+      "fixture": {
+        "files": {
+          "src/job.rs": "pub fn handle(limit: u32) -> u32 {\n    let mut total = 0;\n    for i in 0..limit {\n        total += i;\n    }\n    total\n}\n"
+        }
+      },
+      "verify": {
+        "type": "file_regex",
+        "path": "src/job.rs",
+        "pattern": "fn handle\\(limit: u32\\) -> u32 \\{\\s*\\n\\s*eprintln!\\(\"enter handle\"\\);"
+      },
+      "max_steps": 8,
+      "notes": "插入位置必须真的在函数体首行，不是文件任意位置。"
+    },
+    {
+      "id": "B5",
+      "category": "edit",
+      "difficulty": 3,
+      "prompt": "把 src/msg.rs 里函数 b 返回的字符串改成 \"not found (b)\"。函数 a 必须保持原样，一个字都不能变。",
+      "fixture": {
+        "files": {
+          "src/msg.rs": "pub fn a() -> &'static str {\n    \"not found\"\n}\n\npub fn b() -> &'static str {\n    \"not found\"\n}\n"
+        }
+      },
+      "verify": {
+        "type": "file_equals",
+        "path": "src/msg.rs",
+        "text": "pub fn a() -> &'static str {\n    \"not found\"\n}\n\npub fn b() -> &'static str {\n    \"not found (b)\"\n}\n"
+      },
+      "max_steps": 10,
+      "notes": "两处字符串完全相同。str_replace 要求唯一匹配，正确做法是带上下文改，或者按行定位。整体替换会连 a 一起改掉。"
+    },
+    {
+      "id": "E1",
+      "category": "env",
+      "difficulty": 1,
+      "prompt": "data/ 目录里字节数最大的文件是哪一个？把它的相对路径写入 answer.txt。",
+      "fixture": {
+        "files": {
+          "data/small.txt": "abc\n",
+          "data/mid.txt": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\n",
+          "data/big.txt": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n"
+        }
+      },
+      "verify": { "type": "file_equals", "path": "answer.txt", "text": "data/big.txt" },
+      "max_steps": 8,
+      "notes": "必须真的算字节，不能凭字数估计。"
+    },
+    {
+      "id": "E2",
+      "category": "env",
+      "difficulty": 2,
+      "prompt": "统计 pkg/ 目录下（含子目录）普通文件的个数，把数字写入 answer.txt（只写数字）。",
+      "fixture": {
+        "files": {
+          "pkg/a.txt": "a\n",
+          "pkg/b.txt": "b\n",
+          "pkg/sub/c.txt": "c\n",
+          "pkg/sub/deep/d.txt": "d\n",
+          "pkg/sub/deep/e.txt": "e\n"
+        }
+      },
+      "verify": { "type": "file_equals", "path": "answer.txt", "text": "5" },
+      "max_steps": 8,
+      "notes": "递归 + 排除目录本身。用 find/ls 递归都行。"
+    },
+    {
+      "id": "E3",
+      "category": "env",
+      "difficulty": 2,
+      "prompt": "执行一条以 7 作为退出码结束的命令（Linux 下可以是 `sh -c 'exit 7'`，Windows 下用 `cmd /C exit 7`），然后把它真实的退出码写入 answer.txt（只写数字）。",
+      "fixture": { "files": { "placeholder.txt": "不需要这个文件，占位以保证工作区非空\n" } },
+      "verify": { "type": "file_equals", "path": "answer.txt", "text": "7" },
+      "max_steps": 8,
+      "notes": "考的是「非零退出码不等于执行失败」这件事，很多实现会在非零码上直接报工具失败。"
+    },
+    {
+      "id": "A5",
+      "category": "locate",
+      "difficulty": 2,
+      "prompt": "src 目录下哪个文件没有出现在 src/lib.rs 的模块声明里？只把文件名写入 answer.txt。",
+      "fixture": {
+        "files": {
+          "src/lib.rs": "pub mod a;\npub mod b;\n",
+          "src/a.rs": "pub fn a() {}\n",
+          "src/b.rs": "pub fn b() {}\n",
+          "src/c.rs": "pub fn c() {}\n"
+        }
+      },
+      "verify": { "type": "file_equals", "path": "answer.txt", "text": "c.rs" },
+      "max_steps": 10,
+      "notes": "要交叉比对目录列表与 mod 声明，不能靠搜关键字。"
+    },
+    {
+      "id": "A6",
+      "category": "locate",
+      "difficulty": 3,
+      "prompt": "src 下所有 .rs 文件里，真正调用 todo!() 宏的地方有几处？注释里提到的不算。把数字写入 answer.txt。",
+      "fixture": {
+        "files": {
+          "src/a.rs": "// 这里本来想写 todo!()，但已经实现了\npub fn a() -> u32 {\n    1\n}\n",
+          "src/b.rs": "pub fn b() -> u32 {\n    todo!()\n}\n",
+          "src/c.rs": "pub fn c() -> u32 {\n    // TODO: 加上校验\n    todo!()\n}\n"
+        }
+      },
+      "verify": { "type": "file_equals", "path": "answer.txt", "text": "2" },
+      "max_steps": 10,
+      "notes": "干扰项是注释里的 todo!() 和 TODO。要区分代码与注释。"
+    },
+    {
+      "id": "B6",
+      "category": "edit",
+      "difficulty": 3,
+      "prompt": "只把 src/math.rs 里函数 a 的局部变量 x 改名为 total。函数 b 里的 x 不要动。",
+      "fixture": {
+        "files": {
+          "src/math.rs": "pub fn a() -> i32 {\n    let x = 1;\n    x + 1\n}\n\npub fn b() -> i32 {\n    let x = 2;\n    x * 2\n}\n"
+        }
+      },
+      "verify": {
+        "type": "file_equals",
+        "path": "src/math.rs",
+        "text": "pub fn a() -> i32 {\n    let total = 1;\n    total + 1\n}\n\npub fn b() -> i32 {\n    let x = 2;\n    x * 2\n}\n"
+      },
+      "max_steps": 10,
+      "notes": "同名变量两处，只能改一处（同作用域的局部重命名）。"
+    },
+    {
+      "id": "B7",
+      "category": "edit",
+      "difficulty": 2,
+      "prompt": "在 note.txt 末尾追加一行 `// end`，已有内容不要改动。",
+      "fixture": { "files": { "note.txt": "line one\nline two\n" } },
+      "verify": { "type": "file_equals", "path": "note.txt", "text": "line one\nline two\n// end\n" },
+      "max_steps": 8,
+      "notes": "追加语义。整体重写时容易把原有内容或换行弄丢。"
+    },
+    {
+      "id": "B8",
+      "category": "edit",
+      "difficulty": 3,
+      "prompt": "删掉 src/conf.rs 里所有以 `// TODO` 开头的注释行，其他注释和代码一律保留。",
+      "fixture": {
+        "files": {
+          "src/conf.rs": "// 配置文件\npub const A: u32 = 1;\n// TODO: 换成环境变量\npub const B: u32 = 2;\n// TODO 记得加校验\npub const C: u32 = 3;\n"
+        }
+      },
+      "verify": {
+        "type": "file_equals",
+        "path": "src/conf.rs",
+        "text": "// 配置文件\npub const A: u32 = 1;\npub const B: u32 = 2;\npub const C: u32 = 3;\n"
+      },
+      "max_steps": 10,
+      "notes": "只删 TODO 注释，普通注释「// 配置文件」必须留下。"
+    },
+    {
+      "id": "E4",
+      "category": "env",
+      "difficulty": 2,
+      "prompt": "logs/ 目录下所有 .log 文件里，出现 ERROR 次数最多的那个文件叫什么？把文件名（不含目录）写入 answer.txt。",
+      "fixture": {
+        "files": {
+          "logs/a.log": "INFO ok\nERROR boom\nERROR again\n",
+          "logs/b.log": "ERROR one\n",
+          "logs/c.log": "INFO fine\nINFO still fine\n"
+        }
+      },
+      "verify": { "type": "file_equals", "path": "answer.txt", "text": "a.log" },
+      "max_steps": 10,
+      "notes": "要按文件分组计数再取最大，不能只看全局总量。"
+    },
+    {
+      "id": "E5",
+      "category": "env",
+      "difficulty": 2,
+      "prompt": "src 目录下所有 .rs 文件的代码总行数是多少（空行也算）？把数字写入 answer.txt。",
+      "fixture": {
+        "files": {
+          "src/a.rs": "fn a() {\n}\n",
+          "src/b.rs": "\n\nfn b() {\n}\n"
+        }
+      },
+      "verify": { "type": "file_equals", "path": "answer.txt", "text": "6" },
+      "max_steps": 8,
+      "notes": "两个文件分别 2 行和 4 行。要按文件累加，不是只看一个。"
+    }
+  ]
+}

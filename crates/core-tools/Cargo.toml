@@ -1,0 +1,18 @@
+[package]
+name = "core-tools"
+description = "Scoped tool registry and guarded execution pipeline (Mini subset of @deepseek-ai/dsh-tools)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+core-llm = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+
+# Landlock 是裸系统调用，没有现成的高层封装可用（也不用引入额外 crate）：
+# 只在 unix 上链接。版本已由 tokio 传递引入，不新增依赖树。
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

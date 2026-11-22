@@ -1,0 +1,358 @@
+{
+  "_about": "第二层：连续动作。跨文件一致性、跑起来再改、多步收尾。这一层开始区分「会聊天」和「会干活」。",
+  "cases": [
+    {
+      "id": "C1",
+      "category": "refactor",
+      "difficulty": 2,
+      "prompt": "把函数 foo 重命名为 bar：定义处和所有调用点都要改，改完后工作区里不应再出现 foo 这个标识符。",
+      "fixture": {
+        "files": {
+          "src/a.rs": "pub fn foo(x: u32) -> u32 {\n    x + 1\n}\n",
+          "src/b.rs": "use crate::a::foo;\n\npub fn twice(x: u32) -> u32 {\n    foo(foo(x))\n}\n",
+          "src/c.rs": "fn demo() -> u32 {\n    crate::a::foo(1)\n}\n"
+        }
+      },
+      "verify": {
+        "type": "all_of",
+        "all_of": [
+          { "type": "file_contains", "path": "src/a.rs", "text": "pub fn bar(x: u32)" },
+          { "type": "file_not_contains", "path": "src/a.rs", "text": "foo" },
+          { "type": "file_not_contains", "path": "src/b.rs", "text": "foo" },
+          { "type": "file_not_contains", "path": "src/c.rs", "text": "foo" },
+          { "type": "command", "cmd": "{python} -c \"import pathlib,sys;print(''.join(p.read_text() for p in pathlib.Path('src').glob('*.rs')))\"", "stdout_contains": "bar" }
+        ]
+      },
+      "max_steps": 12,
+      "notes": "调用点分散在 use / 直接调用 / 全路径调用三种形态，漏一个就会留下 foo。"
+    },
+    {
+      "id": "C2",
+      "category": "refactor",
+      "difficulty": 3,
+      "prompt": "src/cache.rs 里三处 30 是同一个默认 TTL。在文件顶部加一行 `pub const DEFAULT_TTL: u64 = 30;`，然后把三处字面量都换成 DEFAULT_TTL。最终文件里数字 30 只应出现一次，就是常量定义那一处。",
+      "fixture": {
+        "files": {
+          "src/cache.rs": "pub fn ttl_default() -> u64 {\n    30\n}\n\npub fn ttl_short() -> u64 {\n    30\n}\n\npub fn ttl_long() -> u64 {\n    30\n}\n"
+        }
+      },
+      "verify": {
+        "type": "command",
+        "cmd": "{python} -c \"import pathlib,sys;t=pathlib.Path('src/cache.rs').read_text();sys.exit(0 if t.count('30')==1 and 'pub const DEFAULT_TTL: u64 = 30;' in t else 1)\""
+      },
+      "max_steps": 12,
+      "notes": "要「恰好一次」：常量名里带 30 也不行（会把 count 变成 2）。这是刻意的严格。"
+    },
+    {
+      "id": "C3",
+      "category": "refactor",
+      "difficulty": 3,
+      "prompt": "把 src/lib.rs 里的 helper 函数移到新文件 src/helper.rs，并在 src/lib.rs 顶部加 `pub mod helper;`，让 api 仍然能调用到它。其他文件不要改。",
+      "fixture": {
+        "files": {
+          "src/lib.rs": "pub fn helper(x: u32) -> u32 {\n    x * 2\n}\n\npub fn api(x: u32) -> u32 {\n    helper(x)\n}\n",
+          "src/main.rs": "fn main() {\n    println!(\"{}\", 4);\n}\n"
+        }
+      },
+      "verify": {
+        "type": "all_of",
+        "all_of": [
+          { "type": "file_exists", "path": "src/helper.rs" },
+          { "type": "file_contains", "path": "src/helper.rs", "text": "pub fn helper" },
+          { "type": "file_contains", "path": "src/lib.rs", "text": "pub mod helper;" },
+          { "type": "file_not_contains", "path": "src/lib.rs", "text": "pub fn helper" },
+          { "type": "file_contains", "path": "src/lib.rs", "text": "pub fn api" }
+        ]
+      },
+      "max_steps": 12,
+      "notes": "移动而非复制：原文件里不能再留定义。"
+    },
+    {
+      "id": "D1",
+      "category": "debug",
+      "difficulty": 2,
+      "prompt": "运行 `{python} calc.py` 会失败。修好它，让输出恰好是 42。最后那行传入的列表不要改。",
+      "fixture": {
+        "files": {
+          "calc.py": "def total(xs):\n    s = 0\n    for i in range(len(xs) + 1):\n        s += xs[i]\n    return s\n\n\nprint(total([10, 20, 12]))\n"
+        }
+      },
+      "verify": {
+        "type": "command",
+        "cmd": "{python} calc.py",
+        "expect_exit": 0,
+        "stdout_contains": "42"
+      },
+      "max_steps": 10,
+      "notes": "必须真的跑一次才知道错在哪；只看代码容易猜偏。"
+    },
+    {
+      "id": "D2",
+      "category": "debug",
+      "difficulty": 2,
+      "prompt": "build.py 本应把结果写到 out/result.txt，但现在写到了别的地方。修好脚本，然后运行它，确认 out/result.txt 确实生成了。",
+      "fixture": {
+        "files": {
+          "build.py": "import os\n\nos.makedirs(\"build\", exist_ok=True)\nwith open(\"build/result.txt\", \"w\") as f:\n    f.write(\"ok\")\n"
+        }
+      },
+      "verify": {
+        "type": "all_of",
+        "all_of": [
+          { "type": "file_exists", "path": "out/result.txt" },
+          { "type": "file_contains", "path": "out/result.txt", "text": "ok" },
+          { "type": "file_not_exists", "path": "build/result.txt" }
+        ]
+      },
+      "max_steps": 12,
+      "notes": "改完必须自己跑一遍——「改了但没运行」在这里会被抓出来。"
+    },
+    {
+      "id": "D3",
+      "category": "debug",
+      "difficulty": 2,
+      "prompt": "运行 `{python} parse.py` 会抛 KeyError。修好它让它打印 6，data 字符串本身不要改。",
+      "fixture": {
+        "files": {
+          "parse.py": "import json\n\ndata = '{\"items\": [1, 2, 3]}'\nobj = json.loads(data)\nprint(sum(obj[\"item\"]))\n"
+        }
+      },
+      "verify": {
+        "type": "command",
+        "cmd": "{python} parse.py",
+        "expect_exit": 0,
+        "stdout_contains": "6"
+      },
+      "max_steps": 10,
+      "notes": "键名拼错。要改代码而不是改数据。"
+    },
+    {
+      "id": "D4",
+      "category": "debug",
+      "difficulty": 3,
+      "prompt": "`{python} -m unittest -q test_strutil` 现在失败。修 strutil.py 让测试全部通过，测试文件不要改。",
+      "fixture": {
+        "files": {
+          "strutil.py": "def slug(s):\n    return s\n",
+          "test_strutil.py": "import unittest\n\nfrom strutil import slug\n\n\nclass T(unittest.TestCase):\n    def test_basic(self):\n        self.assertEqual(slug(\"Hello World\"), \"hello-world\")\n\n    def test_trim(self):\n        self.assertEqual(slug(\"  A b \"), \"a-b\")\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+        }
+      },
+      "verify": {
+        "type": "command",
+        "cmd": "{python} -m unittest -q test_strutil",
+        "expect_exit": 0
+      },
+      "max_steps": 12,
+      "notes": "两个测试点：小写化 + 去首尾空白后按空白连接。只满足一个会挂。"
+    },
+    {
+      "id": "H1",
+      "category": "long",
+      "difficulty": 3,
+      "prompt": "把 a.py 与 b.py 里的常量合并进新建的 config.py，删掉 a.py 和 b.py，并让 app.py 改成从 config 导入。最后运行 `{python} test_app.py` 应该打印 ok。",
+      "fixture": {
+        "files": {
+          "a.py": "TIMEOUT = 3\n",
+          "b.py": "RETRY = 2\n",
+          "app.py": "import a\nimport b\n\n\ndef describe():\n    return f\"{a.TIMEOUT}-{b.RETRY}\"\n",
+          "test_app.py": "from app import describe\n\nassert describe() == \"3-2\", describe()\nprint(\"ok\")\n"
+        }
+      },
+      "verify": {
+        "type": "all_of",
+        "all_of": [
+          { "type": "file_exists", "path": "config.py" },
+          { "type": "file_not_exists", "path": "a.py" },
+          { "type": "file_not_exists", "path": "b.py" },
+          { "type": "command", "cmd": "{python} test_app.py", "expect_exit": 0, "stdout_contains": "ok" }
+        ]
+      },
+      "max_steps": 16,
+      "notes": "典型的 6~8 步任务：读三个文件、建新文件、改引用、删旧文件、跑测试。"
+    },
+    {
+      "id": "H2",
+      "category": "long",
+      "difficulty": 3,
+      "prompt": "strutil.py 里还没有 truncate 函数。实现它：文本长度超过 n 时，截成前 n-1 个字符再补一个半角省略号 `…`；不超过 n 时原样返回。实现完运行 `{python} test_more.py`，应该打印 ok。",
+      "fixture": {
+        "files": {
+          "strutil.py": "def slug(s):\n    return \"-\".join(s.lower().split())\n",
+          "test_more.py": "from strutil import truncate\n\nassert truncate(\"abcdef\", 4) == \"abc\\u2026\"\nassert truncate(\"ab\", 4) == \"ab\"\nassert truncate(\"abcd\", 4) == \"abcd\"\nprint(\"ok\")\n"
+        }
+      },
+      "verify": {
+        "type": "command",
+        "cmd": "{python} test_more.py",
+        "expect_exit": 0,
+        "stdout_contains": "ok"
+      },
+      "max_steps": 14,
+      "notes": "边界：等长（abcd,4）返回原串，不少实现会在这里多截一个字符。"
+    },
+    {
+      "id": "H3",
+      "category": "long",
+      "difficulty": 4,
+      "prompt": "运行 `{python} check.py` 失败。定位真正的根因并修复（可能不在 check.py 里），修好后再次运行应打印 ok。check.py 本身不要改。",
+      "fixture": {
+        "files": {
+          "check.py": "from pkg.core import scale\n\nassert scale(2) == 20, scale(2)\nassert scale(0) == 0\nprint(\"ok\")\n",
+          "pkg/__init__.py": "",
+          "pkg/core.py": "MULTIPLIER = 5\n\n\ndef scale(n: int) -> int:\n    return n * MULTIPLIER\n"
+        }
+      },
+      "verify": {
+        "type": "all_of",
+        "all_of": [
+          { "type": "command", "cmd": "{python} check.py", "expect_exit": 0, "stdout_contains": "ok" },
+          { "type": "file_contains", "path": "check.py", "text": "assert scale(2) == 20, scale(2)" }
+        ]
+      },
+      "max_steps": 16,
+      "notes": "禁止改测试。根因是 MULTIPLIER 的值，改成 10 即可；改 check.py 会让第二条断言失败。"
+    },
+    {
+      "id": "C4",
+      "category": "refactor",
+      "difficulty": 3,
+      "prompt": "src/report.rs 里同一段头衔处理重复了三次。把它抽成 `fn title(name: &str) -> String`，三处改成调用它。最终 `to_uppercase()` 只应出现一次（在函数体内）。",
+      "fixture": {
+        "files": {
+          "src/report.rs": "pub fn build_a(name: &str) -> String {\n    let t = name.trim().to_uppercase();\n    format!(\"A {t}\")\n}\n\npub fn build_b(name: &str) -> String {\n    let t = name.trim().to_uppercase();\n    format!(\"B {t}\")\n}\n\npub fn build_c(name: &str) -> String {\n    let t = name.trim().to_uppercase();\n    format!(\"C {t}\")\n}\n"
+        }
+      },
+      "verify": {
+        "type": "command",
+        "cmd": "{python} -c \"import pathlib,sys;t=pathlib.Path('src/report.rs').read_text();sys.exit(0 if t.count('to_uppercase()')==1 and 'fn title' in t and t.count('title(name)')==3 else 1)\""
+      },
+      "max_steps": 14,
+      "notes": "要求三处都改到且只留一处实现。少改一处、或抽了函数但没替换调用点，都过不了。"
+    },
+    {
+      "id": "C5",
+      "category": "refactor",
+      "difficulty": 3,
+      "prompt": "把 src/old.rs 的内容合并进 src/new.rs，删除 src/old.rs，并把 src/lib.rs 里的 `pub mod old;` 改成 `pub mod new;`。",
+      "fixture": {
+        "files": {
+          "src/lib.rs": "pub mod old;\n",
+          "src/old.rs": "pub fn legacy() -> u32 {\n    7\n}\n",
+          "src/new.rs": "pub fn fresh() -> u32 {\n    8\n}\n"
+        }
+      },
+      "verify": {
+        "type": "all_of",
+        "all_of": [
+          { "type": "file_not_exists", "path": "src/old.rs" },
+          { "type": "file_contains", "path": "src/new.rs", "text": "pub fn legacy" },
+          { "type": "file_contains", "path": "src/new.rs", "text": "pub fn fresh" },
+          { "type": "file_contains", "path": "src/lib.rs", "text": "pub mod new;" },
+          { "type": "file_not_contains", "path": "src/lib.rs", "text": "pub mod old;" }
+        ]
+      },
+      "max_steps": 12,
+      "notes": "移动 + 删除 + 改声明三件事，漏一件就挂。"
+    },
+    {
+      "id": "D5",
+      "category": "debug",
+      "difficulty": 2,
+      "prompt": "运行 `{python} match.py` 输出不对：应该在文本里找到 disk 却打印了 False。修好它，字符串不要改。",
+      "fixture": {
+        "files": {
+          "match.py": "import re\n\ntext = \"error: disk full\"\nprint(bool(re.match(\"disk\", text)))\n"
+        }
+      },
+      "verify": {
+        "type": "command",
+        "cmd": "{python} match.py",
+        "expect_exit": 0,
+        "stdout_contains": "True"
+      },
+      "max_steps": 10,
+      "notes": "re.match 只匹配开头，要换 search。典型 API 语义误用。"
+    },
+    {
+      "id": "D6",
+      "category": "debug",
+      "difficulty": 2,
+      "prompt": "运行 `{python} avg.py` 打印出小数，但期望是整数 3。改成整数除法修好它，列表内容不要改。",
+      "fixture": {
+        "files": {
+          "avg.py": "nums = [2, 3, 4]\ntotal = sum(nums)\nprint(total / 3)\n"
+        }
+      },
+      "verify": {
+        "type": "all_of",
+        "all_of": [
+          { "type": "file_regex", "path": "avg.py", "pattern": "total\\s*//\\s*3" },
+          { "type": "command", "cmd": "{python} avg.py", "expect_exit": 0, "stdout_contains": "3" }
+        ]
+      },
+      "max_steps": 10,
+      "notes": "浮点 vs 整除。stdout 断言单独用会误判（3.333 也含 3），所以加了源码层面的正则约束。"
+    },
+    {
+      "id": "D7",
+      "category": "debug",
+      "difficulty": 1,
+      "prompt": "运行 `{python} report.py` 抛 NameError。修好它，让它打印 JSON。",
+      "fixture": {
+        "files": {
+          "report.py": "data = {\"ok\": True}\nprint(json.dumps(data))\n"
+        }
+      },
+      "verify": {
+        "type": "command",
+        "cmd": "{python} report.py",
+        "expect_exit": 0,
+        "stdout_contains": "{\"ok\": true}"
+      },
+      "max_steps": 8,
+      "notes": "缺 import。要读 traceback 才能定位。"
+    },
+    {
+      "id": "H4",
+      "category": "long",
+      "difficulty": 4,
+      "prompt": "cli.py 目前只有 render(name)。给它加上 upper 参数：upper=True 时输出大写，默认保持原样。补完后运行 `{python} test_cli.py` 应打印 ok。测试文件不要改。",
+      "fixture": {
+        "files": {
+          "cli.py": "def render(name: str) -> str:\n    return f\"hello, {name}\"\n",
+          "test_cli.py": "from cli import render\n\nassert render(\"bob\") == \"hello, bob\"\nassert render(\"bob\", upper=True) == \"HELLO, BOB\"\nassert render(\"bob\", upper=False) == \"hello, bob\"\nprint(\"ok\")\n"
+        }
+      },
+      "verify": {
+        "type": "command",
+        "cmd": "{python} test_cli.py",
+        "expect_exit": 0,
+        "stdout_contains": "ok"
+      },
+      "max_steps": 14,
+      "notes": "改签名 + 保默认行为 + 大写分支。把 upper 写成必填参数会让第一条断言挂。"
+    },
+    {
+      "id": "H5",
+      "category": "long",
+      "difficulty": 4,
+      "prompt": "把 users.json 迁移成 users.csv：表头 `name,age`，每行一条用户，年龄保持原值。迁移完成后删除 users.json。",
+      "fixture": {
+        "files": {
+          "users.json": "[{\"name\": \"ann\", \"age\": 31}, {\"name\": \"bob\", \"age\": 25}]\n"
+        }
+      },
+      "verify": {
+        "type": "all_of",
+        "all_of": [
+          { "type": "file_not_exists", "path": "users.json" },
+          { "type": "file_contains", "path": "users.csv", "text": "name,age" },
+          { "type": "file_contains", "path": "users.csv", "text": "ann,31" },
+          { "type": "file_contains", "path": "users.csv", "text": "bob,25" }
+        ]
+      },
+      "max_steps": 14,
+      "notes": "格式转换 + 删除原文件 + 表头正确。用 python 或 bash 都行。"
+    }
+  ]
+}

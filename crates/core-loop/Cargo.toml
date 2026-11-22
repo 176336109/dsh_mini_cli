@@ -1,0 +1,17 @@
+[package]
+name = "core-loop"
+description = "Turn/step driver: the concrete agent loop (Mini subset of @deepseek-ai/dsh-agent-loop)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+core-llm = { workspace = true }
+core-session = { workspace = true }
+core-tools = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

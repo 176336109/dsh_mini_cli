@@ -1,0 +1,17 @@
+[package]
+name = "providers"
+description = "Rust-native implementations of the capability seams: mock/deepseek LLM, bash, fs tools, JSONL persistence, sandbox"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+core-llm = { workspace = true }
+core-session = { workspace = true }
+core-tools = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
